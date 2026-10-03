@@ -1,0 +1,44 @@
+@layer components {
+    .card { @apply bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-100 dark:border-slate-800 shadow-sm shadow-slate-200/70 dark:shadow-none transition-all duration-200; }
+    .inp { @apply w-full px-4 py-3 rounded-2xl text-sm font-medium bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-transparent outline-none transition-all placeholder:text-slate-400 focus:ring-2 focus:ring-emerald-500 focus:bg-white dark:focus:bg-slate-800; }
+    .lbl { @apply block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1.5; }
+    .well { @apply rounded-2xl bg-slate-50 dark:bg-slate-800/60 p-4; }
+    .btn-p { @apply w-full py-3.5 rounded-2xl font-bold transition-all duration-200 active:scale-95 bg-emerald-500 text-white shadow-lg shadow-emerald-500/25 hover:bg-emerald-600; }
+    .btn-s { @apply w-full py-3.5 rounded-2xl font-bold transition-all duration-200 active:scale-95 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700; }
+    .btn-t { @apply w-full py-3 rounded-2xl text-sm font-bold transition-all duration-200 active:scale-95 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-500/20; }
+    .track { @apply h-3 rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800; }
+    .h-sec { @apply text-base font-extrabold tracking-tight text-slate-800 dark:text-slate-100; }
+}
+
+html.dark { color-scheme: dark; }
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.hidden-step { display: none; }
+.modal-active { display: flex !important; }
+.no-bar { scrollbar-width: none; } .no-bar::-webkit-scrollbar { display: none; }
+.ob-fill { width: 33%; transition: width .4s ease; }
+#onboarding:has(#step-2:not(.hidden-step)) .ob-fill { width: 66%; }
+#onboarding:has(#step-3:not(.hidden-step)) .ob-fill { width: 100%; }
+#ui-progress, #ui-prot-bar, #ui-carb-bar, #ui-fat-bar, #ui-agua-bar { height: 100%; border-radius: 9999px; }
+:is(#ui-progress, #ui-prot-bar, #ui-carb-bar, #ui-fat-bar).bg-gray-400 { background: #94a3b8; }
+:is(#ui-progress, #ui-prot-bar, #ui-carb-bar, #ui-fat-bar).bg-green-500 { background: linear-gradient(90deg, #34d399, #10b981); }
+:is(#ui-progress, #ui-prot-bar, #ui-carb-bar, #ui-fat-bar).bg-red-500 { background: linear-gradient(90deg, #fb7185, #e11d48); }
+#ui-agua-bar.bg-cyan-400 { background: linear-gradient(90deg, #67e8f9, #06b6d4); }
+#seccionesComidasContainer > div { border-radius: 1.5rem; padding: 1.25rem; border-color: #f1f5f9; box-shadow: 0 1px 2px rgb(148 163 184 / .2); transition: all .2s; }
+#seccionesComidasContainer h3 i { color: #10b981; }
+#seccionesComidasContainer button[onclick^="abrirPanelRegistro"] { background: #10b981; color: #fff; border-radius: 9999px; padding: .5rem 1rem; }
+#seccionesComidasContainer button[onclick^="abrirPanelRegistro"]:hover { background: #059669; }
+#seccionesComidasContainer [id^="lista-"] > div { background: #f8fafc; border-color: transparent; border-radius: 1rem; padding: .75rem; }
+#seccionesComidasContainer [id^="lista-"] span.font-bold { color: #059669; }
+#listaDeportesRoutine li { padding: .5rem .75rem; margin-bottom: .375rem; border-radius: 1rem; background: #f1f5f9; border: 0; }
+#listaDeportesPerfilEdit li { border-radius: 1rem; padding: .625rem .75rem; background: #f8fafc; border-color: transparent; }
+#listaProgreso > div { border-radius: 1.25rem; padding: .75rem; border-color: #f1f5f9; }
+#resultadosBusqueda > div { padding: .75rem; }
+.dark #seccionesComidasContainer > div, .dark #listaProgreso > div { background: #0f172a; border-color: #1e293b; }
+.dark #seccionesComidasContainer h3, .dark #seccionesComidasContainer [id^="lista-"] p.font-bold, .dark #listaProgreso p.font-bold { color: #f1f5f9; }
+.dark #seccionesComidasContainer [id^="lista-"] > div, .dark #listaDeportesPerfilEdit li, .dark #listaDeportesRoutine li { background: #1e293b; border-color: transparent; }
+.dark #seccionesComidasContainer [id^="lista-"] span.font-bold { color: #34d399; }
+.dark #listaProgreso .bg-gray-50 { background: #1e293b; border-color: #334155; }
+.dark #resultadosBusqueda > div { border-color: #334155; }
+.dark #resultadosBusqueda .bg-indigo-50 { background: #1e293b; }
+.dark #resultadosBusqueda > div:hover { background: #334155; }
+.dark #modalContent b { color: #fff; }
