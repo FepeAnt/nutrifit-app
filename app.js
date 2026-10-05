@@ -3,6 +3,8 @@ let userData = {
     biblioteca: { favoritos: [], creaciones: [], recetas: [], recientes: [] }
 };
 
+let modoVistaDashboard = 'restantes'; // Puede ser 'restantes' o 'totales'
+
 const baseSemilla = [
     { id: "bs_001", nombre: "Pechuga de Pollo cruda", kcal: 110, p: 23, c: 0, f: 1.2, baseGramos: 100 },
     { id: "bs_002", nombre: "Arroz Blanco cocido", kcal: 130, p: 2.7, c: 28, f: 0.3, baseGramos: 100 },
@@ -1385,5 +1387,10 @@ function accionDespuesDeCrear(quiereRegistrar) {
         // Al estar en la pestaña correcta, el recuadro de macros se abrirá bien
         prepararRegistro(ultimoElementoCreado);
     }
+}
+
+function alternarVistaDashboard() {
+    modoVistaDashboard = modoVistaDashboard === 'restantes' ? 'totales' : 'restantes';
+    recalcularComidasTotales(); // Volvemos a pintar los números con el nuevo modo
 }
 
