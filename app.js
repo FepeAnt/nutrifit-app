@@ -231,20 +231,29 @@ function cerrarModalRacha() { document.getElementById('modalRacha').classList.re
 
 function renderizarSeccionesComidas() {
     let container = document.getElementById('seccionesComidasContainer');
-    let html = '';
+    if(!container) return;
+    container.innerHTML = '';
+    
     categoriasComida.forEach(cat => {
-        html += `
-        <div class="bg-white rounded-2xl shadow-sm p-5 border border-gray-100">
+        container.innerHTML += `
+        <div class="bg-white dark:bg-slate-900 rounded-[1.5rem] p-4 shadow-sm border border-slate-100 dark:border-slate-800">
             <div class="flex justify-between items-center mb-3">
-                <h3 class="font-bold text-lg text-slate-800"><i class="fa-solid ${cat.icono} text-blue-600 mr-2"></i>${cat.nombre}</h3>
-                <button onclick="abrirPanelRegistro('${cat.id}', '${cat.nombre}')" class="bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">+ Añadir alimento</button>
+                <div>
+                    <h3 class="font-bold text-slate-800 dark:text-white text-lg flex items-center gap-2">
+                        <i class="fa-solid ${cat.icono} text-slate-400"></i> ${cat.nombre}
+                    </h3>
+                    <!-- AQUÍ SE INYECTAN LOS MACROS PEQUEÑOS -->
+                    <span id="kcal-${cat.id}" class="text-[11px] font-semibold text-slate-400">🔥 0 kcal • 0 P | 0 C | 0 G</span>
+                </div>
+                <button onclick="abrirPanelRegistro('${cat.id}')" class="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-emerald-500 hover:text-white transition-all flex items-center justify-center font-bold">
+                    <i class="fa-solid fa-plus"></i>
+                </button>
             </div>
-            <div id="lista-${cat.id}" class="space-y-2">
-                <p class="text-gray-400 text-xs italic">Sin alimentos registrados.</p>
-            </div>
+            <div id="lista-${cat.id}" class="space-y-2"></div>
         </div>`;
     });
-    container.innerHTML = html;
+    
+    recalcularComidasTotales();
 }
 
 function abrirPanelRegistro(catId, catNombre) {
