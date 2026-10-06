@@ -5,6 +5,14 @@ let userData = {
 
 let modoVistaDashboard = 'restantes'; // Puede ser 'restantes' o 'totales'
 
+let modoVistaDashboard = 'restantes';
+
+function alternarVistaDashboard() {
+    modoVistaDashboard = modoVistaDashboard === 'restantes' ? 'totales' : 'restantes';
+    recalcularComidasTotales(); 
+}
+
+
 const baseSemilla = [
     { id: "bs_001", nombre: "Pechuga de Pollo cruda", kcal: 110, p: 23, c: 0, f: 1.2, baseGramos: 100 },
     { id: "bs_002", nombre: "Arroz Blanco cocido", kcal: 130, p: 2.7, c: 28, f: 0.3, baseGramos: 100 },
