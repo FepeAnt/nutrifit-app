@@ -717,12 +717,12 @@ function recalcularComidasTotales() {
     let sumKcal = 0, sumP = 0, sumC = 0, sumF = 0;
     let comidasDelDia = userData.comidas[fechaSeleccionada] || [];
 
-    // Objeto para acumular los macros por cada categoría de comida
     let macrosPorCategoria = {
         desayuno: { k: 0, p: 0, c: 0, f: 0 },
         almuerzo: { k: 0, p: 0, c: 0, f: 0 },
+        merienda: { k: 0, p: 0, c: 0, f: 0 },
         cena: { k: 0, p: 0, c: 0, f: 0 },
-        snack: { k: 0, p: 0, c: 0, f: 0 }
+        snacks: { k: 0, p: 0, c: 0, f: 0 }
     };
 
     comidasDelDia.forEach(c => {
@@ -737,8 +737,7 @@ function recalcularComidasTotales() {
         }
     });
 
-    // 1. ACTUALIZAR LOS TEXTOS DE CADA COMIDA (Ej: "🔥 350 kcal • 20 P | 40 C | 10 G")
-    ['desayuno', 'almuerzo', 'cena', 'snack'].forEach(cat => {
+    ['desayuno', 'almuerzo', 'merienda', 'cena', 'snacks'].forEach(cat => {
         let elKcal = document.getElementById(`kcal-${cat}`);
         if (elKcal) {
             let m = macrosPorCategoria[cat];
@@ -746,7 +745,6 @@ function recalcularComidasTotales() {
         }
     });
 
-    // 2. LÓGICA DEL ALTERNADOR DE LA CABECERA
     let metaDia = obtenerMetaDelDia(fechaSeleccionada);
     let metaKcal = metaDia.totalKcal; 
     let metaP = userData.calculos.macrosBase.p;
@@ -754,26 +752,28 @@ function recalcularComidasTotales() {
     let metaF = userData.calculos.macrosBase.f;
 
     let pctKcal = (sumKcal / metaKcal) * 100;
-    document.getElementById('barraProgresoKcal').style.width = `${Math.min(pctKcal, 100)}%`;
+    let barra = document.getElementById('barraProgresoKcal');
+    if(barra) barra.style.width = `${Math.min(pctKcal, 100)}%`;
 
     let tituloCabecera = document.getElementById('vistaKcalTitulo');
     let numeroCabecera = document.getElementById('vistaKcalNumero');
 
-    if (modoVistaDashboard === 'restantes') {
-        tituloCabecera.innerHTML = 'kcal restantes <i class="fa-solid fa-chevron-right text-xs"></i>';
-        numeroCabecera.innerText = Math.max(0, Math.round(metaKcal - sumKcal));
-        document.getElementById('ui-prot-t').innerText = `${Math.max(0, Math.round(metaP - sumP))}g`;
-        document.getElementById('ui-carb-t').innerText = `${Math.max(0, Math.round(metaC - sumC))}g`;
-        document.getElementById('ui-fat-t').innerText = `${Math.max(0, Math.round(metaF - sumF))}g`;
-    } else {
-        tituloCabecera.innerHTML = 'kcal consumidas <i class="fa-solid fa-chevron-right text-xs"></i>';
-        numeroCabecera.innerHTML = `<span class="text-slate-400">${Math.round(sumKcal)} /</span> ${Math.round(metaKcal)}`;
-        document.getElementById('ui-prot-t').innerText = `${Math.round(sumP)} / ${metaP}g`;
-        document.getElementById('ui-carb-t').innerText = `${Math.round(sumC)} / ${metaC}g`;
-        document.getElementById('ui-fat-t').innerText = `${Math.round(sumF)} / ${metaF}g`;
+    if(tituloCabecera && numeroCabecera) {
+        if (modoVistaDashboard === 'restantes') {
+            tituloCabecera.innerHTML = 'kcal restantes <i class="fa-solid fa-chevron-right text-[10px]"></i>';
+            numeroCabecera.innerText = Math.max(0, Math.round(metaKcal - sumKcal));
+            document.getElementById('ui-prot-t').innerText = `${Math.max(0, Math.round(metaP - sumP))}g`;
+            document.getElementById('ui-carb-t').innerText = `${Math.max(0, Math.round(metaC - sumC))}g`;
+            document.getElementById('ui-fat-t').innerText = `${Math.max(0, Math.round(metaF - sumF))}g`;
+        } else {
+            tituloCabecera.innerHTML = 'kcal consumidas <i class="fa-solid fa-chevron-right text-[10px]"></i>';
+            numeroCabecera.innerHTML = `<span class="text-slate-400 text-3xl">${Math.round(sumKcal)} /</span> ${Math.round(metaKcal)}`;
+            document.getElementById('ui-prot-t').innerText = `${Math.round(sumP)} / ${metaP}g`;
+            document.getElementById('ui-carb-t').innerText = `${Math.round(sumC)} / ${metaC}g`;
+            document.getElementById('ui-fat-t').innerText = `${Math.round(sumF)} / ${metaF}g`;
+        }
     }
 }
-
 
     categoriasComida.forEach(cat => {
         let elem = document.getElementById(`lista-${cat.id}`);
