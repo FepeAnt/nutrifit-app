@@ -697,33 +697,66 @@ function borrarComida(id) {
 }
 
 function recalcularComidasTotales() {
-    let sumKcal = 0, sumM = { p: 0, c: 0, f: 0 }; 
-    let sumMicro = { fibra: 0, azucar: 0, sodio: 0, potasio: 0, calcio: 0, hierro: 0, magnesio: 0, zinc: 0, vita: 0, vitc: 0, vitd: 0, vitb12: 0, folato: 0 };
-    
-    let htmlListas = { desayuno: '', almuerzo: '', merienda: '', cena: '', snacks: '' };
-    let comidasDia = userData.comidas[fechaSeleccionada] || [];
+    let sumKcal = 0, sumP = 0, sumC = 0, sumF = 0;
+    let comidasDelDia = userData.comidas[fechaSeleccionada] || [];
 
-    comidasDia.forEach(c => { 
-        sumKcal += c.kcal; 
-        sumM.p += c.macros.p; sumM.c += c.macros.c; sumM.f += c.macros.f; 
-        let cat = c.categoria || 'snacks'; 
+    // Objeto para acumular los macros por cada categoría de comida
+    let macrosPorCategoria = {
+        desayuno: { k: 0, p: 0, c: 0, f: 0 },
+        almuerzo: { k: 0, p: 0, c: 0, f: 0 },
+        cena: { k: 0, p: 0, c: 0, f: 0 },
+        snack: { k: 0, p: 0, c: 0, f: 0 }
+    };
 
-        if(c.micros) {
-            Object.keys(sumMicro).forEach(k => { sumMicro[k] += c.micros[k] || 0; });
+    comidasDelDia.forEach(c => {
+        sumKcal += c.kcal;
+        sumP += c.macros.p; sumC += c.macros.c; sumF += c.macros.f;
+        
+        if (macrosPorCategoria[c.categoria]) {
+            macrosPorCategoria[c.categoria].k += c.kcal;
+            macrosPorCategoria[c.categoria].p += c.macros.p;
+            macrosPorCategoria[c.categoria].c += c.macros.c;
+            macrosPorCategoria[c.categoria].f += c.macros.f;
         }
-
-        htmlListas[cat] += `
-        <div class="flex justify-between items-center p-2.5 bg-gray-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 text-sm">
-            <div>
-                <p class="font-bold text-gray-800 dark:text-slate-100">${c.nombre}</p>
-                <p class="text-[11px] text-gray-500">${Number(c.macros.p.toFixed(1))}P | ${Number(c.macros.c.toFixed(1))}C | ${Number(c.macros.f.toFixed(1))}G</p>
-            </div>
-            <div class="flex items-center gap-3">
-                <span class="font-bold text-emerald-600 dark:text-emerald-400">${Math.round(c.kcal)} kcal</span>
-                <button onclick="borrarComida(${c.id})" class="text-rose-400 hover:text-rose-600"><i class="fa-solid fa-trash"></i></button>
-            </div>
-        </div>`;
     });
+
+    // 1. ACTUALIZAR LOS TEXTOS DE CADA COMIDA (Ej: "🔥 350 kcal • 20 P | 40 C | 10 G")
+    ['desayuno', 'almuerzo', 'cena', 'snack'].forEach(cat => {
+        let elKcal = document.getElementById(`kcal-${cat}`);
+        if (elKcal) {
+            let m = macrosPorCategoria[cat];
+            elKcal.innerText = `🔥 ${Math.round(m.k)} kcal • ${Math.round(m.p)} P | ${Math.round(m.c)} C | ${Math.round(m.f)} G`;
+        }
+    });
+
+    // 2. LÓGICA DEL ALTERNADOR DE LA CABECERA
+    let metaDia = obtenerMetaDelDia(fechaSeleccionada);
+    let metaKcal = metaDia.totalKcal; 
+    let metaP = userData.calculos.macrosBase.p;
+    let metaC = userData.calculos.macrosBase.c + Math.round(metaDia.extraKcal / 4);
+    let metaF = userData.calculos.macrosBase.f;
+
+    let pctKcal = (sumKcal / metaKcal) * 100;
+    document.getElementById('barraProgresoKcal').style.width = `${Math.min(pctKcal, 100)}%`;
+
+    let tituloCabecera = document.getElementById('vistaKcalTitulo');
+    let numeroCabecera = document.getElementById('vistaKcalNumero');
+
+    if (modoVistaDashboard === 'restantes') {
+        tituloCabecera.innerHTML = 'kcal restantes <i class="fa-solid fa-chevron-right text-xs"></i>';
+        numeroCabecera.innerText = Math.max(0, Math.round(metaKcal - sumKcal));
+        document.getElementById('ui-prot-t').innerText = `${Math.max(0, Math.round(metaP - sumP))}g`;
+        document.getElementById('ui-carb-t').innerText = `${Math.max(0, Math.round(metaC - sumC))}g`;
+        document.getElementById('ui-fat-t').innerText = `${Math.max(0, Math.round(metaF - sumF))}g`;
+    } else {
+        tituloCabecera.innerHTML = 'kcal consumidas <i class="fa-solid fa-chevron-right text-xs"></i>';
+        numeroCabecera.innerHTML = `<span class="text-slate-400">${Math.round(sumKcal)} /</span> ${Math.round(metaKcal)}`;
+        document.getElementById('ui-prot-t').innerText = `${Math.round(sumP)} / ${metaP}g`;
+        document.getElementById('ui-carb-t').innerText = `${Math.round(sumC)} / ${metaC}g`;
+        document.getElementById('ui-fat-t').innerText = `${Math.round(sumF)} / ${metaF}g`;
+    }
+}
+
 
     categoriasComida.forEach(cat => {
         let elem = document.getElementById(`lista-${cat.id}`);
