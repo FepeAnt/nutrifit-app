@@ -40,7 +40,6 @@ window.onload = () => {
         if(!userData.comidas || Array.isArray(userData.comidas)) userData.comidas = {}; 
         if(!userData.aguaMl || typeof userData.aguaMl === 'number') userData.aguaMl = {};
         
-        // MIGRACIÓN: Actividad extra ahora se guarda por fecha
         if(!userData.actividadExtra) userData.actividadExtra = {};
         if(userData.actividadExtraHoy) { 
             userData.actividadExtra[obtenerFechaIso(new Date())] = userData.actividadExtraHoy;
@@ -58,8 +57,8 @@ window.onload = () => {
         
         document.getElementById('dashName').innerText = `Hola, ${userData.nombre} — ${userData.edad} años | ${userData.pesoKg.toFixed(1)}kg | Obj: ${userData.objetivo.toUpperCase()}`;
         
-        renderizarSeccionesComidas();
-        calcularMetabolismo(); 
+        calcularMetabolismo(); // Primer paso: calcular datos de la cuenta
+        renderizarSeccionesComidas(); // Segundo paso: renderizar comidas
         verificarAlertaProgreso();
         renderizarCalendarioSemanal();
         actualizarVistaFecha();
@@ -315,11 +314,23 @@ const mensajesModal = {
     2: "<b>¡Un gusto conocerte!</b> 🧬<br><br>Para calcular tu metabolismo de forma precisa, necesitamos tus datos corporales.",
     3: "<b>¡Ya casi terminamos!</b> 🏃‍♂️<br><br>Queremos saber tu nivel de actividad física diaria y entrenamientos para ajustar la energía que necesitas."
 };
+
 function mostrarModalAlerta(step) {
-    const overlay = document.getElementById('modalOverlay'); const box = document.getElementById('modalBox');
+    const overlay = document.getElementById('modalOverlay'); 
+    const box = document.getElementById('modalBox');
+    const btnContinuar = document.getElementById('btnContinuarAlerta');
+    
+    if (btnContinuar) btnContinuar.style.display = 'block'; // Asegura que vuelva a ser visible
+    
     document.getElementById('modalContent').innerHTML = mensajesModal[step];
-    overlay.classList.remove('hidden'); setTimeout(() => { overlay.classList.remove('opacity-0'); box.classList.remove('scale-90'); box.classList.add('scale-100'); }, 10);
+    overlay.classList.remove('hidden'); 
+    setTimeout(() => { 
+        overlay.classList.remove('opacity-0'); 
+        box.classList.remove('scale-90'); 
+        box.classList.add('scale-100'); 
+    }, 10);
 }
+
 function cerrarModalAlerta() {
     const overlay = document.getElementById('modalOverlay'); const box = document.getElementById('modalBox');
     overlay.classList.add('opacity-0'); box.classList.remove('scale-100'); box.classList.add('scale-90');
@@ -482,6 +493,7 @@ function agregarActividadExtra() {
     
     document.getElementById('extraMinutos').value = ''; 
     actualizarUIDashboard(); 
+    recalcularComidasTotales();
     guardarDatosLocales();
 }
 
@@ -747,25 +759,35 @@ function recalcularComidasTotales() {
     let htmlListas = { desayuno: '', almuerzo: '', merienda: '', cena: '', snacks: '' };
 
     comidasDelDia.forEach(c => {
-        sumKcal += c.kcal;
-        sumP += c.macros.p; sumC += c.macros.c; sumF += c.macros.f;
+        const kcal = Number(c.kcal ?? c.kal ?? 0);
+        const macros = c.macros || {};
+
+        const p = Number(macros.p ?? 0);
+        const carb = Number(macros.c ?? 0); // Renombrado limpiamente
+        const f = Number(macros.f ?? 0);
+
+        sumKcal += kcal;
+        sumP += p;
+        sumC += carb;
+        sumF += f;
+
         let cat = c.categoria || 'snacks'; 
 
         if (macrosPorCategoria[cat]) {
-            macrosPorCategoria[cat].k += c.kcal;
-            macrosPorCategoria[cat].p += c.macros.p;
-            macrosPorCategoria[cat].c += c.macros.c;
-            macrosPorCategoria[cat].f += c.macros.f;
+            macrosPorCategoria[cat].k += kcal;
+            macrosPorCategoria[cat].p += p;
+            macrosPorCategoria[cat].c += carb;
+            macrosPorCategoria[cat].f += f;
         }
 
         htmlListas[cat] += `
         <div class="flex justify-between items-center p-2.5 bg-gray-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 text-sm">
             <div>
                 <p class="font-bold text-gray-800 dark:text-slate-100">${c.nombre}</p>
-                <p class="text-[11px] text-gray-500">${Number(c.macros.p.toFixed(1))}P | ${Number(c.macros.c.toFixed(1))}C | ${Number(c.macros.f.toFixed(1))}G</p>
+                <p class="text-[11px] text-gray-500">${Number(p.toFixed(1))}P | ${Number(carb.toFixed(1))}C | ${Number(f.toFixed(1))}G</p>
             </div>
             <div class="flex items-center gap-3">
-                <span class="font-bold text-emerald-600 dark:text-emerald-400">${Math.round(c.kcal)} kcal</span>
+                <span class="font-bold text-emerald-600 dark:text-emerald-400">${Math.round(kcal)} kcal</span>
                 <button onclick="borrarComida(${c.id})" class="text-rose-400 hover:text-rose-600"><i class="fa-solid fa-trash"></i></button>
             </div>
         </div>`;
@@ -783,11 +805,11 @@ function recalcularComidasTotales() {
 
     let metaDia = obtenerMetaDelDia(fechaSeleccionada);
     let metaKcal = metaDia.totalKcal; 
-    let metaP = userData.calculos.macrosBase.p;
-    let metaC = userData.calculos.macrosBase.c + Math.round(metaDia.extraKcal / 4);
-    let metaF = userData.calculos.macrosBase.f;
+    let metaP = userData.calculos?.macrosBase?.p || 0;
+    let metaC = (userData.calculos?.macrosBase?.c || 0) + Math.round(metaDia.extraKcal / 4);
+    let metaF = userData.calculos?.macrosBase?.f || 0;
 
-    let pctKcal = (sumKcal / metaKcal) * 100;
+    let pctKcal = metaKcal > 0 ? (sumKcal / metaKcal) * 100 : 0;
     let barra = document.getElementById('barraProgresoKcal');
     if(barra) barra.style.width = `${Math.min(pctKcal, 100)}%`;
 
