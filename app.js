@@ -435,11 +435,10 @@ function calcularMetabolismo() {
     
     let teaKcal = 0;
     userData.rutinaDeportes.forEach(dep => { 
-        // MET neto para deportes fijos
         teaKcal += (Math.max(0, dep.met - 1) * userData.pesoKg * ((dep.dias * dep.min) / 60 / 7)); 
     });
     
-    let mantenimiento = bmr + neatKcal + teaKcal + (bmr * 0.1); // +10% TEF
+    let mantenimiento = bmr + neatKcal + teaKcal + (bmr * 0.1); 
     let objetivoKcal = mantenimiento;
     if(userData.objetivo === 'deficit') objetivoKcal -= 500;
     if(userData.objetivo === 'volumen') objetivoKcal += 300;
@@ -453,15 +452,17 @@ function calcularMetabolismo() {
     let aguaMeta = Math.round(userData.pesoKg * 35);
     if(userData.rutinaDeportes.length > 0) aguaMeta += 500;
 
-    // Guardamos las bases fijas
+    // Asignamos los cálculos al objeto global
     userData.calculos = { 
         bmr, neatKcal, teaKcal, metaBase: objetivoKcal, aguaMeta, 
         macrosBase: { p: Math.round(proT), c: Math.round(carbT), f: Math.round(fatT) } 
     };
     
+    // CORRECCIÓN CRÍTICA: Guardar los datos inmediatamente para que no queden en null
+    guardarDatosLocales();
+    
     actualizarUIDashboard(); 
     actualizarAguaUI();
-    guardarDatosLocales();
 }
 
 function agregarActividadExtra() {
