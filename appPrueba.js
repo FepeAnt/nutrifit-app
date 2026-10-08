@@ -1,7 +1,59 @@
-let userData = { 
-    rutinaDeportes: [], actividadExtraHoy: [], comidas: {}, aguaMl: {}, progreso: [], recordatorioDias: 7,
-    biblioteca: { favoritos: [], creaciones: [], recetas: [], recientes: [] }
-};
+// ==========================================
+// ESTADO, ESQUEMA Y VALIDACIÓN
+// ==========================================
+const STORAGE_KEY = 'nutrifit_user';
+
+function perfilVacio() {                       // function (hoisted): se usa justo debajo
+    return {
+        rutinaDeportes: [], actividadExtra: {}, comidas: {}, aguaMl: {}, progreso: [],
+        recordatorioDias: 7, movimiento: { cant: 0, unidad: 'pasos' },
+        biblioteca: { favoritos: [], creaciones: [], recetas: [], recientes: [] }
+    };
+}
+let userData = perfilVacio();
+
+function leerJSON(clave, defecto) {
+    try { const raw = localStorage.getItem(clave); return raw ? JSON.parse(raw) : defecto; }
+    catch (e) { console.warn(`Dato corrupto en ${clave}`, e); return defecto; }
+}
+
+function calcularEdad(iso) {                   // sin el desfase UTC de new Date('YYYY-MM-DD')
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+    if (!m) return NaN;
+    const hoy = new Date(); let e = hoy.getFullYear() - +m[1];
+    if (hoy.getMonth() + 1 < +m[2] || (hoy.getMonth() + 1 === +m[2] && hoy.getDate() < +m[3])) e--;
+    return e;
+}
+
+function normalizarUserData(raw) {
+    const base = perfilVacio(), esObj = o => o && typeof o === 'object' && !Array.isArray(o);
+    const u = { ...base, ...(esObj(raw) ? raw : {}) };
+    if (!esObj(u.comidas)) u.comidas = {};
+    if (!esObj(u.aguaMl)) u.aguaMl = {};
+    if (!esObj(u.actividadExtra)) u.actividadExtra = {};
+    if (!esObj(u.metasCongeladas)) u.metasCongeladas = {};
+    if (!Array.isArray(u.rutinaDeportes)) u.rutinaDeportes = [];
+    if (!Array.isArray(u.progreso)) u.progreso = [];
+    u.biblioteca = { ...base.biblioteca, ...(esObj(u.biblioteca) ? u.biblioteca : {}) };
+    u.movimiento = { ...base.movimiento, ...(esObj(u.movimiento) ? u.movimiento : {}) };
+    u.recordatorioDias = Number(u.recordatorioDias) || 7;
+
+    if (Array.isArray(u.actividadExtraHoy) && u.actividadExtraHoy.length) {   // migración
+        const hoy = obtenerFechaIso(new Date());
+        u.actividadExtra[hoy] = [...(u.actividadExtra[hoy] ?? []), ...u.actividadExtraHoy];
+    }
+    delete u.actividadExtraHoy;
+
+    ['pesoKg', 'alturaCm', 'edad'].forEach(k => { u[k] = (u[k] == null || u[k] === '') ? NaN : Number(u[k]); });
+    if (u.fechaNac) { const e = calcularEdad(u.fechaNac); if (Number.isFinite(e)) u.edad = e; } // la edad se renueva sola
+    return u;
+}
+
+const esNum = (n, min, max) => Number.isFinite(n) && n >= min && n <= max;
+function perfilCompleto(u) {
+    return !!u.nombre && (u.genero === 'm' || u.genero === 'f') && !!u.objetivo
+        && esNum(u.pesoKg, 20, 400) && esNum(u.alturaCm, 80, 250) && esNum(u.edad, 10, 110);
+}
 
 let modoVistaDashboard = 'restantes'; // Puede ser 'restantes' o 'totales'
 
@@ -19,7 +71,56 @@ const baseSemilla = [
     { id: "bs_005", nombre: "Manzana mediana", kcal: 95, p: 0.5, c: 25, f: 0.3, baseGramos: 150 }
 ];
 
-let alimentosPersonalizados = JSON.parse(localStorage.getItem('nutrifit_alimentos')) || [];
+// ==========================================
+// MOTOR DE ALIMENTOS (esquema único + factor único)
+// ==========================================
+function normalizarAlimento(a) {
+    const unidad = a.unidadMedida || 'g';
+    return { ...a, unidadMedida: unidad,
+        cantidadBase: a.cantidadBase || a.baseGramos || (unidad === 'g' ? 100 : 1),
+        kcal: a.kcal ?? 0, p: a.p ?? a.proteinas ?? 0, c: a.c ?? a.carbohidratos ?? 0, f: a.f ?? a.grasas ?? 0 };
+}
+const factorDe = (a, cant) => a.unidadMedida === 'g' ? cant / a.cantidadBase : cant;   // regla única
+const macrosDe = (a, cant) => { const k = factorDe(a, cant);
+    return { kcal: a.kcal * k, p: a.p * k, c: a.c * k, f: a.f * k }; };
+
+// Lista para un futuro creador de recetas con porciones / peso final (aún sin UI que la llame).
+function crearReceta(nombre, ingredientes, porciones = 1, pesoFinalG = null) {
+    const t = ingredientes.reduce((acc, { alimento, cantidad }) => {
+        const m = macrosDe(alimento, cantidad);
+        return { kcal: acc.kcal + m.kcal, p: acc.p + m.p, c: acc.c + m.c, f: acc.f + m.f };
+    }, { kcal: 0, p: 0, c: 0, f: 0 });
+    const por = x => +(x / porciones).toFixed(2);
+    return normalizarAlimento({
+        id: 'rec_' + Date.now(), nombre, esReceta: true, unidadMedida: 'porcion', cantidadBase: 1,
+        kcal: por(t.kcal), p: por(t.p), c: por(t.c), f: por(t.f),
+        porciones, pesoFinalG, pesoPorUnidad: pesoFinalG ? +(pesoFinalG / porciones).toFixed(1) : null,
+        ingredientes: ingredientes.map(i => ({ id: i.alimento.id, cantidad: i.cantidad, unidad: i.alimento.unidadMedida }))
+    });
+}
+
+const sinAcentos = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+// _n (nombre sin acentos) es no enumerable: no se copia con {...a} ni acaba en localStorage / onclick
+function indexarAlimento(a) {
+    Object.defineProperty(a, '_n', { value: sinAcentos(a.nombre), writable: true, enumerable: false, configurable: true });
+    return a;
+}
+const Alimentos = {
+    lista: [],
+    cargar() {
+        const propios = leerJSON('nutrifit_alimentos', []);
+        this.lista = [...baseSemilla.map(a => ({ ...a, origen: 'semilla' })), ...(Array.isArray(propios) ? propios : [])]
+            .map(normalizarAlimento).map(indexarAlimento);
+    },
+    guardar() {
+        const propios = this.lista.filter(a => a.origen !== 'semilla');
+        try { localStorage.setItem('nutrifit_alimentos', JSON.stringify(propios)); } catch (e) { console.error(e); }
+    },
+    agregar(a) { const n = indexarAlimento(normalizarAlimento(a)); this.lista.push(n); this.guardar(); return n; },
+    buscar(q) { const t = sinAcentos(q);
+        return this.lista.filter(a => a._n.includes(t)).sort((x, y) => y._n.startsWith(t) - x._n.startsWith(t)).slice(0, 20); }
+};
+
 let categoriaSeleccionadaActual = 'desayuno';
 let fechaSeleccionada = obtenerFechaIso(new Date());
 let mesCalendarioActual = new Date();
@@ -31,69 +132,77 @@ function obtenerFechaIso(d) {
     return `${ano}-${mes}-${dia}`;
 }
 
-window.onload = () => {
-    let datosGuardados = localStorage.getItem('nutrifit_user');
-    if(datosGuardados) {
-        userData = JSON.parse(datosGuardados);
-        if(!userData.progreso) userData.progreso = [];
-        if(!userData.recordatorioDias) userData.recordatorioDias = 7;
-        if(!userData.comidas || Array.isArray(userData.comidas)) userData.comidas = {}; 
-        if(!userData.aguaMl || typeof userData.aguaMl === 'number') userData.aguaMl = {};
-        
-        // MIGRACIÓN: Actividad extra ahora se guarda por fecha
-        if(!userData.actividadExtra) userData.actividadExtra = {};
-        if(userData.actividadExtraHoy) { 
-            userData.actividadExtra[obtenerFechaIso(new Date())] = userData.actividadExtraHoy;
-            delete userData.actividadExtraHoy;
-        }
+// ==========================================
+// PINTADO Y ARRANQUE (cargar → validar → calcular → vista → pintar)
+// ==========================================
+function seguro(etapa, fn) { try { fn(); } catch (e) { console.error(`[NutriFit] "${etapa}" falló:`, e); } }
 
-        if(!userData.biblioteca) {
-            userData.biblioteca = { favoritos: [], creaciones: [], recetas: [], recientes: [] };
-            guardarDatosLocales();
-        } 
-        
-        document.getElementById('onboarding').style.display = 'none';
-        document.getElementById('dashboard').style.display = 'block';
-        document.getElementById('fabContainer').classList.remove('hidden');
-        
-        document.getElementById('dashName').innerText = `Hola, ${userData.nombre} — ${userData.edad} años | ${userData.pesoKg.toFixed(1)}kg | Obj: ${userData.objetivo.toUpperCase()}`;
-        
-        renderizarSeccionesComidas();
-        calcularMetabolismo(); 
-        verificarAlertaProgreso();
-        renderizarCalendarioSemanal();
-        actualizarVistaFecha();
-    } else {
-        mostrarModalAlerta(1);
-    }
-};
-
-function guardarDatosLocales() { localStorage.setItem('nutrifit_user', JSON.stringify(userData)); }
-
-// --- SISTEMA DE CALENDARIO Y FECHAS ---
-function cambiarFechaSeleccionada(fechaStr) {
-    fechaSeleccionada = fechaStr;
-    renderizarCalendarioSemanal();
-    actualizarVistaFecha();
+function etiquetaDeFecha(iso) {
+    return iso === obtenerFechaIso(new Date()) ? 'Hoy'
+        : new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
 }
 
-function actualizarVistaFecha() {
-    let hoyIso = obtenerFechaIso(new Date());
-    let label = (fechaSeleccionada === hoyIso) ? 'Hoy' : new Date(fechaSeleccionada + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-    
-    let dashLabel = document.getElementById('dashLabelHoy');
-    if (dashLabel) dashLabel.innerText = label;
-    
-    // CORRECCIÓN: Control de seguridad para evitar el crasheo
-    let titulo = document.getElementById('ui-fecha-titulo');
-    if (titulo) {
-        titulo.innerText = (fechaSeleccionada === hoyIso) ? 'Presupuesto calórico de hoy' : `Presupuesto para el ${label}`;
+function pintarEncabezado() {
+    const u = userData;
+    document.getElementById('dashName').innerText =
+        `Hola, ${u.nombre} — ${u.edad} años | ${u.pesoKg.toFixed(1)}kg | Obj: ${String(u.objetivo).toUpperCase()}`;
+}
+function pintarEtiquetaFecha() {               // sale de actualizarVistaFecha
+    const esHoy = fechaSeleccionada === obtenerFechaIso(new Date());
+    const label = etiquetaDeFecha(fechaSeleccionada);
+    const set = (id, t) => { const el = document.getElementById(id); if (el) el.innerText = t; };
+    set('dashLabelHoy', label);
+    set('ui-fecha-titulo', esHoy ? 'Presupuesto calórico de hoy' : `Presupuesto para el ${label}`);
+}
+
+function renderDia() {
+    seguro('encabezado',   pintarEncabezado);
+    seguro('fecha',        pintarEtiquetaFecha);
+    seguro('agua',         actualizarAguaUI);
+    seguro('presupuesto',  actualizarUIDashboard);
+    seguro('comidas',      recalcularComidasTotales);   // ya incluye calcularRachaGeneral()
+    seguro('recordatorio', verificarAlertaProgreso);
+}
+function renderTodo() { seguro('semana', renderizarCalendarioSemanal); renderDia(); }
+function actualizarVistaFecha() { renderDia(); }        // alias: no rompe llamadas existentes
+
+function mostrarVista(vista) {
+    document.getElementById('onboarding').style.display = vista === 'onboarding' ? '' : 'none';
+    document.getElementById('dashboard').style.display  = vista === 'dashboard' ? 'block' : 'none';
+    document.getElementById('fabContainer').classList.toggle('hidden', vista !== 'dashboard');
+}
+
+function iniciarApp() {
+    Alimentos.cargar();                          // 0. catálogo antes de pintar
+    const raw = leerJSON(STORAGE_KEY, null);
+    userData = normalizarUserData(raw);
+    if (!perfilCompleto(userData)) {             // perfil nuevo, a medias o corrupto → onboarding limpio
+        mostrarVista('onboarding'); mostrarModalAlerta(1); return;
     }
-    
-    actualizarAguaUI();
-    actualizarUIDashboard(); 
-    recalcularComidasTotales();
-    calcularRachaGeneral();
+    if (raw && raw.actividadExtraHoy) guardarDatosLocales();   // persiste la migración una sola vez
+    asegurarCalculos();                          // 1. datos derivados ANTES de cualquier pintado
+    fechaSeleccionada = obtenerFechaIso(new Date());
+    mostrarVista('dashboard');                   // 2. vista
+    seguro('secciones', renderizarSeccionesComidas);   // 3. solo crea el DOM
+    renderTodo();                                // 4. un único pintado
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciarApp);   // reemplaza window.onload
+else iniciarApp();
+
+function guardarDatosLocales() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(userData)); }
+    catch (e) { console.error('[NutriFit] No se pudo guardar (¿almacenamiento lleno?):', e); }
+}
+
+// --- SISTEMA DE CALENDARIO Y FECHAS ---
+function cambiarFechaSeleccionada(iso) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return;
+    fechaSeleccionada = iso;
+    renderTodo();                                // semana + agua + presupuesto + macros + racha
+}
+function moverDia(delta) {                       // útil para flechas ‹ › o swipe
+    const d = new Date(fechaSeleccionada + 'T00:00:00'); d.setDate(d.getDate() + delta);
+    cambiarFechaSeleccionada(obtenerFechaIso(d));
 }
 
 function renderizarCalendarioSemanal() {
@@ -257,11 +366,10 @@ function renderizarSeccionesComidas() {
             <div id="lista-${cat.id}" class="space-y-2"></div>
         </div>`;
     });
-    
-    recalcularComidasTotales();
 }
 
-function abrirPanelRegistro(catId, catNombre) {
+function abrirPanelRegistro(catId) {
+    const catNombre = categoriasComida.find(c => c.id === catId)?.nombre ?? catId;
     categoriaSeleccionadaActual = catId;
     document.getElementById('regTituloSeccion').innerText = `Añadir a ${catNombre}`;
     document.getElementById('panelRegistro').classList.remove('hidden');
@@ -333,33 +441,9 @@ function nextStep(step) {
     mostrarModalAlerta(step + 1);
 }
 function prevStep(step) { document.getElementById(`step-${step}`).classList.add('hidden-step'); document.getElementById(`step-${step-1}`).classList.remove('hidden-step'); document.getElementById('step-indicator').innerText = `Paso ${step-1} de 3`; }
-function calcularEdadEnVivo() {
-    const fecha = new Date(document.getElementById('fechaNac').value); if(isNaN(fecha)) return;
-    const hoy = new Date(); let anos = hoy.getFullYear() - fecha.getFullYear();
-    if (hoy.getMonth() < fecha.getMonth() || (hoy.getMonth() === fecha.getMonth() && hoy.getDate() < fecha.getDate())) { anos--; }
-    userData.edad = anos; document.getElementById('edadMostrada').innerText = `Edad exacta: ${anos} años`;
-}
-
-function toggleCrearBaseInput() {
-    let u = document.getElementById('crearUnidad').value;
-    let lbl = document.getElementById('lblCantidadBase');
-    let txt = document.getElementById('lblUnidadBaseTxt');
-    let inputBase = document.getElementById('crearCantidadBase');
-    let contPeso = document.getElementById('containerPesoUnidad');
-    let txtNombre = document.getElementById('txtNombreUnidad');
-
-    if (u === 'g') {
-        lbl.innerText = "Macros para (g)";
-        txt.innerText = 'g';
-        inputBase.value = 100;
-        contPeso.classList.add('hidden');
-    } else {
-        lbl.innerText = "Macros para";
-        txt.innerText = u; 
-        inputBase.value = 1;
-        contPeso.classList.remove('hidden');
-        txtNombre.innerText = u;
-    }
+function calcularEdadEnVivo() {                  // solo muestra: ya no escribe en userData.edad
+    const e = calcularEdad(document.getElementById('fechaNac').value);
+    document.getElementById('edadMostrada').innerText = Number.isFinite(e) ? `Edad exacta: ${e} años` : '';
 }
 
 function agregarDeporteRoutine() {
@@ -373,145 +457,128 @@ function agregarDeporteRoutine() {
 }
 
 function finalizarOnboarding() {
-    let pesoInput = parseFloat(document.getElementById('peso').value);
-    userData.pesoKg = document.getElementById('unidadPeso').value === 'lbs' ? pesoInput * 0.453592 : pesoInput;
-    userData.alturaCm = document.getElementById('unidadAltura').value === 'cm' ? parseFloat(document.getElementById('alturaCm').value) : ((parseFloat(document.getElementById('alturaFt').value||0)*30.48) + (parseFloat(document.getElementById('alturaIn').value||0)*2.54));
-    
-    userData.nombre = document.getElementById('nombre').value;
-    userData.genero = document.getElementById('genero').value;
-    userData.objetivo = document.getElementById('objetivo').value;
-    userData.movimiento = { cant: parseFloat(document.getElementById('movimientoCantidad').value || 0), unidad: document.getElementById('movimientoUnidad').value };
-    
-    // CORRECCIÓN: Guardar la edad correctamente para que el cálculo BMR funcione
-    let fechaNacInput = document.getElementById('fechaNac').value;
-    if(fechaNacInput) {
-        let f = new Date(fechaNacInput);
-        let hoy = new Date(); let anos = hoy.getFullYear() - f.getFullYear();
-        if (hoy.getMonth() < f.getMonth() || (hoy.getMonth() === f.getMonth() && hoy.getDate() < f.getDate())) anos--;
-        userData.edad = anos;
-    } else {
-        userData.edad = 18; // Fallback de seguridad
-    }
-    
-    let mMusc = parseFloat(document.getElementById('masaMuscular').value || 0);
-    if(mMusc > 0 && document.getElementById('unidadMusculo').value === 'lbs') mMusc = mMusc * 0.453592;
-    let pGrasa = parseFloat(document.getElementById('porcentajeGrasa').value || 0);
+    const val = id => document.getElementById(id).value, num = id => parseFloat(val(id));
+    const kg = num('peso') * (val('unidadPeso') === 'lbs' ? 0.453592 : 1);
+    const cm = val('unidadAltura') === 'cm' ? num('alturaCm')
+             : ((num('alturaFt') || 0) * 30.48 + (num('alturaIn') || 0) * 2.54);
+    let mMusc = num('masaMuscular') || 0; if (mMusc > 0 && val('unidadMusculo') === 'lbs') mMusc *= 0.453592;
+    const pGrasa = num('porcentajeGrasa') || 0;
 
-    userData.progreso = [{ 
-        fecha: new Date().toISOString(), 
-        peso: userData.pesoKg, 
-        grasa: pGrasa > 0 ? pGrasa : null, 
-        musculo: mMusc > 0 ? mMusc : null,
-        foto: null 
-    }];
-
-    guardarDatosLocales(); location.reload(); 
-}
-
-// NUEVA FUNCIÓN: Calcula la meta para un día específico
-function obtenerMetaDelDia(fechaIso) {
-    let base = userData.calculos?.metaBase || 2000;
-    let extra = 0;
-    let actividades = userData.actividadExtra[fechaIso] || [];
-    
-    actividades.forEach(act => {
-        // Corrección clínica: Usamos METs netos (met - 1) para no sumar el metabolismo basal dos veces
-        extra += (Math.max(0, act.met - 1) * userData.pesoKg * (act.min / 60));
-    });
-    
-    return { totalKcal: base + extra, extraKcal: extra, baseKcal: base };
-}
-
-function calcularMetabolismo() {
-    let bmr = (10 * userData.pesoKg) + (6.25 * userData.alturaCm) - (5 * userData.edad);
-    bmr = userData.genero === 'm' ? bmr + 5 : bmr - 161;
-    
-    let neatKcal = 0;
-    if(userData.movimiento.cant > 0) {
-        if(userData.movimiento.unidad === 'pasos') neatKcal = (userData.movimiento.cant / 1000) * 0.04 * userData.pesoKg * 10; 
-        else if(userData.movimiento.unidad === 'km') neatKcal = userData.movimiento.cant * userData.pesoKg * 0.75;
-        else if(userData.movimiento.unidad === 'mi') neatKcal = (userData.movimiento.cant * 1.609) * userData.pesoKg * 0.75;
-    }
-    
-    let teaKcal = 0;
-    userData.rutinaDeportes.forEach(dep => { 
-        teaKcal += (Math.max(0, dep.met - 1) * userData.pesoKg * ((dep.dias * dep.min) / 60 / 7)); 
-    });
-    
-    let mantenimiento = bmr + neatKcal + teaKcal + (bmr * 0.1); 
-    let objetivoKcal = mantenimiento;
-    if(userData.objetivo === 'deficit') objetivoKcal -= 500;
-    if(userData.objetivo === 'volumen') objetivoKcal += 300;
-    if(userData.objetivo === 'recomposicion') objetivoKcal -= 200;
-
-    let proT = userData.pesoKg * (userData.objetivo === 'volumen' ? 2.0 : 2.2); 
-    let fatT = userData.pesoKg * 0.9;
-    let carbT = (objetivoKcal - (proT*4) - (fatT*9)) / 4;
-    if(carbT < 0) carbT = 0;
-
-    let aguaMeta = Math.round(userData.pesoKg * 35);
-    if(userData.rutinaDeportes.length > 0) aguaMeta += 500;
-
-    // Asignamos los cálculos al objeto global
-    userData.calculos = { 
-        bmr, neatKcal, teaKcal, metaBase: objetivoKcal, aguaMeta, 
-        macrosBase: { p: Math.round(proT), c: Math.round(carbT), f: Math.round(fatT) } 
+    const borrador = {
+        ...userData, nombre: val('nombre').trim(), apellido: val('apellido').trim(),
+        genero: val('genero'), objetivo: val('objetivo'),
+        pesoKg: kg, alturaCm: cm, fechaNac: val('fechaNac'), edad: calcularEdad(val('fechaNac')),
+        movimiento: { cant: num('movimientoCantidad') || 0, unidad: val('movimientoUnidad') },
+        progreso: [{ fecha: new Date().toISOString(), peso: kg, grasa: pGrasa > 0 ? pGrasa : null, musculo: mMusc > 0 ? mMusc : null, foto: null }],
+        calculos: null
     };
-    
-    // CORRECCIÓN CRÍTICA: Guardar los datos inmediatamente para que no queden en null
-    guardarDatosLocales();
-    
-    actualizarUIDashboard(); 
-    actualizarAguaUI();
+    if (!perfilCompleto(borrador)) { alert('Revisa peso, altura y fecha de nacimiento.'); return; }
+    userData = borrador; guardarDatosLocales();
+    iniciarApp();                                // sin location.reload()
+    window.scrollTo(0, 0);
+}
+
+// ==========================================
+// CÁLCULO PURO Y AUTO-REPARABLE
+// ==========================================
+function calcularPerfilMetabolico(u) {
+    const kg = u.pesoKg;
+    const bmr = 10 * kg + 6.25 * u.alturaCm - 5 * u.edad + (u.genero === 'm' ? 5 : -161);
+    const { cant = 0, unidad = 'pasos' } = u.movimiento || {};
+    let neat = 0;
+    if (cant > 0) {
+        if (unidad === 'pasos') neat = (cant / 1000) * 0.04 * kg * 10;
+        else if (unidad === 'km') neat = cant * kg * 0.75;
+        else if (unidad === 'mi') neat = cant * 1.609 * kg * 0.75;
+    }
+    const tea = u.rutinaDeportes.reduce((a, d) => a + Math.max(0, d.met - 1) * kg * (d.dias * d.min) / 60 / 7, 0);
+    const metaBase = bmr + neat + tea + bmr * 0.1 + ({ deficit: -500, volumen: 300, recomposicion: -200 }[u.objetivo] || 0);
+    const proT = kg * (u.objetivo === 'volumen' ? 2.0 : 2.2), fatT = kg * 0.9;
+    const carbT = Math.max(0, (metaBase - proT * 4 - fatT * 9) / 4);
+    return {
+        bmr, neatKcal: neat, teaKcal: tea, metaBase,
+        aguaMeta: Math.round(kg * 35) + (u.rutinaDeportes.length ? 500 : 0),
+        macrosBase: { p: Math.round(proT), c: Math.round(carbT), f: Math.round(fatT) }
+    };
+}
+
+const calculosValidos = c => !!c && Number.isFinite(c.metaBase) && c.metaBase > 0 && !!c.macrosBase
+    && ['p', 'c', 'f'].every(k => Number.isFinite(c.macrosBase[k]));
+
+function asegurarCalculos({ forzar = false } = {}) {
+    if (forzar || !calculosValidos(userData.calculos)) {
+        userData.calculos = calcularPerfilMetabolico(userData);
+        guardarDatosLocales();
+    }
+    return userData.calculos;
+}
+function calcularMetabolismo() { asegurarCalculos({ forzar: true }); renderTodo(); }   // misma firma que usabas
+
+// ==========================================
+// META DEL DÍA: una sola fuente para kcal y macros
+// ==========================================
+function obtenerMetaDelDia(iso) {
+    const c = asegurarCalculos();
+    const base = userData.metasCongeladas?.[iso] ?? { metaBase: c.metaBase, macros: c.macrosBase, kg: userData.pesoKg };
+    const extra = (userData.actividadExtra?.[iso] ?? [])
+        .reduce((a, act) => a + Math.max(0, act.met - 1) * base.kg * (act.min / 60), 0);
+    return {
+        baseKcal: base.metaBase, extraKcal: extra, totalKcal: base.metaBase + extra,
+        macros: { p: base.macros.p, c: base.macros.c + Math.round(extra / 4), f: base.macros.f }
+    };
+}
+function congelarMetaDelDia(iso) {               // se llama al registrar la primera comida del día
+    const c = asegurarCalculos();
+    userData.metasCongeladas ??= {};
+    userData.metasCongeladas[iso] ??= { metaBase: c.metaBase, macros: { ...c.macrosBase }, kg: userData.pesoKg };
 }
 
 function agregarActividadExtra() {
-    let select = document.getElementById('extraActividad'); 
-    let min = parseFloat(document.getElementById('extraMinutos').value); 
+    let select = document.getElementById('extraActividad');
+    let min = parseFloat(document.getElementById('extraMinutos').value);
     if(!min) return;
-    
+
     if(!userData.actividadExtra[fechaSeleccionada]) {
         userData.actividadExtra[fechaSeleccionada] = [];
     }
-    
-    userData.actividadExtra[fechaSeleccionada].push({ 
-        nombre: select.options[select.selectedIndex].text, 
-        met: parseFloat(select.value), 
-        min 
+
+    userData.actividadExtra[fechaSeleccionada].push({
+        nombre: select.options[select.selectedIndex].text,
+        met: parseFloat(select.value),
+        min
     });
-    
-    document.getElementById('extraMinutos').value = ''; 
-    actualizarUIDashboard(); 
+
+    document.getElementById('extraMinutos').value = '';
     guardarDatosLocales();
+    renderDia();
 }
 
 function actualizarUIDashboard() {
-    let c = userData.calculos;
+    let c = asegurarCalculos();
     let metaDia = obtenerMetaDelDia(fechaSeleccionada);
     let extraHTML = metaDia.extraKcal > 0 ? `<div class="flex justify-between text-orange-500 font-bold"><span>Extra de este día:</span> <span>+${Math.round(metaDia.extraKcal)} kcal</span></div>` : '';
-    
+
     document.getElementById('tdeeBreakdown').innerHTML = `<div class="flex justify-between"><span>Tasa Basal:</span> <span>${Math.round(c.bmr)} kcal</span></div><div class="flex justify-between"><span>Pasos/Distancia:</span> <span>+${Math.round(c.neatKcal)} kcal</span></div><div class="flex justify-between"><span>Deporte Regular:</span> <span>+${Math.round(c.teaKcal)} kcal/día</span></div>${extraHTML}`;
-    
-    document.getElementById('dashTDEE').innerText = `${Math.round(metaDia.totalKcal)} kcal`; 
-    
-    // CORRECCIÓN: Control de seguridad para evitar que crashee si se elimina del HTML
+
+    document.getElementById('dashTDEE').innerText = `${Math.round(metaDia.totalKcal)} kcal`;
+
     let uiGoalElement = document.getElementById('ui-goal');
     if (uiGoalElement) uiGoalElement.innerText = `Objetivo: ${Math.round(metaDia.totalKcal)} kcal`;
-    
-    // Sumamos la actividad extra a los hidratos (fuente de energía prioritaria del músculo)
-    let extraCarbs = Math.round(metaDia.extraKcal / 4);
-    
-    document.getElementById('ui-prot-t').innerText = c.macrosBase.p + 'g'; 
-    document.getElementById('ui-carb-t').innerText = (c.macrosBase.c + extraCarbs) + 'g'; 
-    document.getElementById('ui-fat-t').innerText = c.macrosBase.f + 'g';
-    
+
+    // Los macros objetivo (ui-prot-t / ui-carb-t / ui-fat-t) los pinta siempre recalcularComidasTotales.
+
     let caloriasExtraHoyEl = document.getElementById('caloriasExtraHoy');
-    if(caloriasExtraHoyEl) caloriasExtraHoyEl.innerText = `+${Math.round(metaDia.extraKcal)} kcal extra ganadas hoy`;
+    if(caloriasExtraHoyEl) {
+        let cuando = fechaSeleccionada === obtenerFechaIso(new Date()) ? 'hoy' : `el ${etiquetaDeFecha(fechaSeleccionada)}`;
+        caloriasExtraHoyEl.innerText = `+${Math.round(metaDia.extraKcal)} kcal extra ganadas ${cuando}`;
+    }
 }
 
 function toggleCrearBaseInput() {
     let unidad = document.getElementById('crearUnidad').value;
     document.getElementById('containerCantidadBase').style.display = (unidad === 'g') ? 'block' : 'none';
+    // Oculto o no, la base debe ser coherente con la unidad (si no, "por unidad" se dividía entre 100)
+    document.getElementById('crearCantidadBase').value = (unidad === 'g') ? 100 : 1;
 }
 
 let alimentoSeleccionadoBase = null; let timeoutBusqueda = null;
@@ -528,9 +595,9 @@ function buscarEnOpenFoodFacts(termino) {
     timeoutBusqueda = setTimeout(async () => {
         contenedor.innerHTML = '<div class="p-2 text-xs text-gray-400">Buscando...</div>'; contenedor.classList.remove('hidden');
         let htmlResultados = '';
-        alimentosPersonalizados.filter(a => a.nombre.toLowerCase().includes(termino.toLowerCase())).forEach(item => { 
+        Alimentos.buscar(termino).forEach(item => { 
             let etiquetaMedida = (item.unidadMedida === 'g') ? `por ${item.cantidadBase}g` : `por 1 ${item.unidadMedida}`;
-            htmlResultados += `<div onclick='prepararRegistro(${JSON.stringify(item)})' class="p-2 hover:bg-gray-100 cursor-pointer text-sm border-b bg-indigo-50">⭐ <b>${item.nombre}</b> <span class="text-xs text-gray-500">(${item.kcal} kcal ${etiquetaMedida})</span></div>`; 
+            htmlResultados += `<div onclick='prepararRegistro(${JSON.stringify(item)})' class="p-2 hover:bg-gray-100 cursor-pointer text-sm border-b bg-indigo-50">${item.origen === 'semilla' ? '🌱' : '⭐'} <b>${item.nombre}</b> <span class="text-xs text-gray-500">(${item.kcal} kcal ${etiquetaMedida})</span></div>`; 
         });
         try {
             let response = await fetch(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(termino)}&search_simple=1&action=process&json=1&page_size=5`);
@@ -554,59 +621,28 @@ function buscarEnOpenFoodFacts(termino) {
     }, 400);
 }
 
-function prepararRegistro(item) { 
-    // 1. INTERCEPCIÓN BLINDADA PARA RECETAS
-    if (modoAgregandoReceta) {
-        let defaultCant = item.cantidadPreferida || item.cantidadBase || 100;
-        let cant = prompt(`¿Qué cantidad de ${item.nombre} (${item.unidadMedida || 'g'}) vas a usar?`, defaultCant);
-        
-        if (cant !== null && !isNaN(cant) && parseFloat(cant) > 0) {
-            let cantidadUsada = parseFloat(cant);
-            let base = item.cantidadBase || (item.unidadMedida === 'g' ? 100 : 1);
-            let factor = cantidadUsada / base; // Matemáticamente perfecto para todo (0.5 tazas, 200g, etc.)
-            
-            let ing = {
-                nombre: item.nombre,
-                cantidad: cantidadUsada,
-                unidadMedida: item.unidadMedida || 'g',
-                pesoPorUnidad: item.pesoPorUnidad || null,
-                kcal: item.kcal * factor,
-                p: (item.p || 0) * factor,
-                c: (item.c || 0) * factor,
-                f: (item.f || 0) * factor
-            };
-            ingredientesRecetaTemp.push(ing);
-        }
-        
-        modoAgregandoReceta = false;
-        document.getElementById('regTituloSeccion').innerText = tituloOriginalPanel;
-        document.getElementById('tab-creaciones').classList.remove('hidden');
-        document.getElementById('tab-crear').classList.remove('hidden');
-        document.getElementById('buscadorAlimento').placeholder = "🔍 Buscar alimento o código de barras...";
-        
-        cambiarTabRegistro('crear');
-        cambiarModoCreacion('receta');
-        actualizarResumenReceta();
-        return; // Detenemos la ejecución aquí, no se abre el panel de abajo.
-    }
+function prepararRegistro(item) {
+    item = normalizarAlimento(item);
 
-    // 2. FLUJO NORMAL DE REGISTRO
-    alimentoSeleccionadoBase = item; 
-    document.getElementById('resultadosBusqueda').classList.add('hidden'); 
-    
+    // 1. Si estamos armando una receta, el alimento se desvía al creador de recetas
+    if (manejarSeleccionParaReceta(item)) return;
+
+    // 2. Flujo normal de registro
+    alimentoSeleccionadoBase = item;
+    document.getElementById('resultadosBusqueda').classList.add('hidden');
+
     let divTabs = document.getElementById('contenidoTabsDinamico');
     if(divTabs) divTabs.classList.add('hidden');
 
-    document.getElementById('detalleAlimentoElegido').classList.remove('hidden'); 
-    document.getElementById('regNombre').innerText = item.nombre; 
-    
-    let strUnidad = item.unidadMedida || 'g';
+    document.getElementById('detalleAlimentoElegido').classList.remove('hidden');
+    document.getElementById('regNombre').innerText = item.nombre;
+
+    let strUnidad = item.unidadMedida;
     if (item.pesoPorUnidad && strUnidad !== 'g') strUnidad += ` (${item.pesoPorUnidad}g)`;
-    document.getElementById('regUnidad').innerText = strUnidad; 
-    
-    let cantidadDefault = item.cantidadPreferida ? item.cantidadPreferida : (item.cantidadBase ? item.cantidadBase : (item.unidadMedida === 'g' ? 100 : 1));
-    document.getElementById('regCantidad').value = cantidadDefault; 
-    
+    document.getElementById('regUnidad').innerText = strUnidad;
+
+    document.getElementById('regCantidad').value = item.cantidadPreferida || item.cantidadBase;
+
     let favs = userData.biblioteca.favoritos || [];
     let btnFav = document.getElementById('btnFav');
     if(btnFav) {
@@ -616,62 +652,56 @@ function prepararRegistro(item) {
             btnFav.classList.remove('text-amber-400'); btnFav.classList.add('text-slate-300');
         }
     }
-    recalcularPreview(); 
+    recalcularPreview();
 }
 
-function recalcularPreview() { 
-    let cantidad = parseFloat(document.getElementById('regCantidad').value); 
+function recalcularPreview() {
+    let cantidad = parseFloat(document.getElementById('regCantidad').value);
     if(isNaN(cantidad) || cantidad <= 0 || !alimentoSeleccionadoBase) {
-        document.getElementById('prevKcal').innerText = "0"; 
-        document.getElementById('prevP').innerText = "0"; document.getElementById('prevC').innerText = "0"; document.getElementById('prevF').innerText = "0"; 
+        document.getElementById('prevKcal').innerText = "0";
+        document.getElementById('prevP').innerText = "0"; document.getElementById('prevC').innerText = "0"; document.getElementById('prevF').innerText = "0";
         return;
     }
-    let base = alimentoSeleccionadoBase.cantidadBase || (alimentoSeleccionadoBase.unidadMedida === 'g' ? 100 : 1);
-    let factor = cantidad / base; // Soporte perfecto para decimales y fracciones
-    
-    document.getElementById('prevKcal').innerText = Math.round(alimentoSeleccionadoBase.kcal * factor); 
-    document.getElementById('prevP').innerText = Number(((alimentoSeleccionadoBase.p || 0) * factor).toFixed(1)); 
-    document.getElementById('prevC').innerText = Number(((alimentoSeleccionadoBase.c || 0) * factor).toFixed(1)); 
-    document.getElementById('prevF').innerText = Number(((alimentoSeleccionadoBase.f || 0) * factor).toFixed(1)); 
+    const m = macrosDe(alimentoSeleccionadoBase, cantidad);
+    document.getElementById('prevKcal').innerText = Math.round(m.kcal);
+    document.getElementById('prevP').innerText = Number(m.p.toFixed(1));
+    document.getElementById('prevC').innerText = Number(m.c.toFixed(1));
+    document.getElementById('prevF').innerText = Number(m.f.toFixed(1));
 }
 
-function registrarComidaSeleccionada() { 
-    if(!alimentoSeleccionadoBase) return; 
+const MICROS_KEYS = ['fibra','azucar','sodio','potasio','calcio','hierro','magnesio','zinc','vita','vitc','vitd','vitb12','folato'];
+
+function registrarComidaSeleccionada() {
+    if(!alimentoSeleccionadoBase) return;
     if (window.lockRegistro) return;
     window.lockRegistro = true; setTimeout(() => { window.lockRegistro = false; }, 400);
 
-    let cantidad = parseFloat(document.getElementById('regCantidad').value); 
-    let base = alimentoSeleccionadoBase.cantidadBase || (alimentoSeleccionadoBase.unidadMedida === 'g' ? 100 : 1);
-    let factor = cantidad / base; 
-    
-    let strMedida = alimentoSeleccionadoBase.unidadMedida || 'g';
-    if (alimentoSeleccionadoBase.pesoPorUnidad && strMedida !== 'g') strMedida = `${strMedida}s de ${alimentoSeleccionadoBase.pesoPorUnidad}g`;
+    const alimento = alimentoSeleccionadoBase;
+    const cantidad = parseFloat(document.getElementById('regCantidad').value);
+    if (!(cantidad > 0)) { alert("Ingresa una cantidad válida."); return; }
+    const factor = factorDe(alimento, cantidad);
+    const m = macrosDe(alimento, cantidad);
 
-    let nuevaComida = { 
+    let strMedida = alimento.unidadMedida;
+    if (alimento.pesoPorUnidad && strMedida !== 'g') strMedida = `${strMedida}s de ${alimento.pesoPorUnidad}g`;
+
+    const nuevaComida = {
         categoria: categoriaSeleccionadaActual,
-        nombre: `${alimentoSeleccionadoBase.nombre} (${cantidad} ${strMedida})`, 
-        kcal: alimentoSeleccionadoBase.kcal * factor, 
-        macros: { p: (alimentoSeleccionadoBase.p || 0) * factor, c: (alimentoSeleccionadoBase.c || 0) * factor, f: (alimentoSeleccionadoBase.f || 0) * factor }, 
-        micros: alimentoSeleccionadoBase.micros ? {
-            fibra: (alimentoSeleccionadoBase.micros.fibra || 0) * factor, azucar: (alimentoSeleccionadoBase.micros.azucar || 0) * factor,
-            sodio: (alimentoSeleccionadoBase.micros.sodio || 0) * factor, potasio: (alimentoSeleccionadoBase.micros.potasio || 0) * factor,
-            calcio: (alimentoSeleccionadoBase.micros.calcio || 0) * factor, hierro: (alimentoSeleccionadoBase.micros.hierro || 0) * factor,
-            magnesio: (alimentoSeleccionadoBase.micros.magnesio || 0) * factor, zinc: (alimentoSeleccionadoBase.micros.zinc || 0) * factor,
-            vita: (alimentoSeleccionadoBase.micros.vita || 0) * factor, vitc: (alimentoSeleccionadoBase.micros.vitc || 0) * factor,
-            vitd: (alimentoSeleccionadoBase.micros.vitd || 0) * factor, vitb12: (alimentoSeleccionadoBase.micros.vitb12 || 0) * factor,
-            folato: (alimentoSeleccionadoBase.micros.folato || 0) * factor
-        } : {},
-        id: Date.now() 
-    }; 
+        nombre: `${alimento.nombre} (${cantidad} ${strMedida})`,
+        kcal: m.kcal,
+        macros: { p: m.p, c: m.c, f: m.f },
+        micros: alimento.micros ? Object.fromEntries(MICROS_KEYS.map(k => [k, (alimento.micros[k] || 0) * factor])) : {},
+        id: Date.now()
+    };
 
     if(!userData.comidas[fechaSeleccionada]) userData.comidas[fechaSeleccionada] = [];
-    userData.comidas[fechaSeleccionada].push(nuevaComida); 
-    
-    let itemParaBiblioteca = { ...alimentoSeleccionadoBase, cantidadPreferida: cantidad }; 
-    registrarEnRecientes(itemParaBiblioteca);
-    
+    userData.comidas[fechaSeleccionada].push(nuevaComida);
+    congelarMetaDelDia(fechaSeleccionada);       // el historial no cambia si luego cambias tu peso
+
+    registrarEnRecientes({ ...alimento, cantidadPreferida: cantidad });
+
     alimentoSeleccionadoBase = null; cerrarPanelRegistro();
-    recalcularComidasTotales(); renderizarCalendarioSemanal(); guardarDatosLocales(); 
+    guardarDatosLocales(); renderTodo();         // renderTodo repinta también el punto de color del día
 }
 
 function guardarAlimentoEnBD() { 
@@ -679,7 +709,7 @@ function guardarAlimentoEnBD() {
     let unidad = document.getElementById('crearUnidad').value; 
     
     let cantidadIngresada = parseFloat(document.getElementById('crearCantidadBase').value) || (unidad === 'g' ? 100 : 1);
-    let pesoPorUnidad = parseFloat(document.getElementById('crearPesoPorUnidad').value) || null;
+    let pesoPorUnidad = parseFloat(document.getElementById('crearPesoPorUnidad')?.value) || null;
     let kcalIngresadas = parseFloat(document.getElementById('crearKcal').value) || 0; 
     
     if(!nombre || kcalIngresadas <= 0) { 
@@ -715,22 +745,24 @@ function guardarAlimentoEnBD() {
         esReceta: false
     }; 
 
-    alimentosPersonalizados.push(alimentoNormalizado); 
-    localStorage.setItem('nutrifit_alimentos', JSON.stringify(alimentosPersonalizados)); 
+    const guardado = Alimentos.agregar(alimentoNormalizado);
     
     ['crearName','crearKcal','crearProt','crearCarb','crearFat','crearPesoPorUnidad'].forEach(id=>{ let el = document.getElementById(id); if(el) el.value=''; }); 
-    document.getElementById('crearCantidadBase').value = '100';
+    toggleCrearBaseInput();                       // restablece la base según la unidad elegida
     
-    mostrarExitoCreacion(alimentoNormalizado);
+    mostrarExitoCreacion(guardado);
 }
 
-function borrarComida(id) { 
-    if(userData.comidas[fechaSeleccionada]) {
-        userData.comidas[fechaSeleccionada] = userData.comidas[fechaSeleccionada].filter(c => c.id !== id);
+function borrarComida(id) {
+    const lista = userData.comidas[fechaSeleccionada];
+    if(lista) {
+        userData.comidas[fechaSeleccionada] = lista.filter(c => c.id !== id);
+        if(userData.comidas[fechaSeleccionada].length === 0 && userData.metasCongeladas) {
+            delete userData.metasCongeladas[fechaSeleccionada];   // día vacío: ya no hay historial que proteger
+        }
     }
-    recalcularComidasTotales(); 
-    renderizarCalendarioSemanal();
-    guardarDatosLocales(); 
+    guardarDatosLocales();
+    renderTodo();
 }
 
 function recalcularComidasTotales() {
@@ -781,11 +813,9 @@ function recalcularComidasTotales() {
         if(elem) elem.innerHTML = htmlListas[cat] || `<p class="text-gray-400 dark:text-slate-500 text-xs italic">Sin alimentos registrados.</p>`;
     });
 
-    let metaDia = obtenerMetaDelDia(fechaSeleccionada);
-    let metaKcal = metaDia.totalKcal; 
-    let metaP = userData.calculos.macrosBase.p;
-    let metaC = userData.calculos.macrosBase.c + Math.round(metaDia.extraKcal / 4);
-    let metaF = userData.calculos.macrosBase.f;
+    const meta = obtenerMetaDelDia(fechaSeleccionada);
+    const metaKcal = meta.totalKcal;
+    const { p: metaP, c: metaC, f: metaF } = meta.macros;
 
     let pctKcal = (sumKcal / metaKcal) * 100;
     let barra = document.getElementById('barraProgresoKcal');
@@ -845,12 +875,15 @@ function agregarDeporteDesdePerfil() {
 function borrarDeportePerfil(index) { userData.rutinaDeportes.splice(index, 1); renderizarDeportesPerfil(); }
 
 function guardarPerfilEditado() {
-    userData.pesoKg = parseFloat(document.getElementById('editPeso').value);
-    userData.alturaCm = parseFloat(document.getElementById('editAltura').value);
+    const kg = parseFloat(document.getElementById('editPeso').value);
+    const cm = parseFloat(document.getElementById('editAltura').value);
+    if (!esNum(kg, 20, 400) || !esNum(cm, 80, 250)) { alert("Revisa peso (20–400 kg) y altura (80–250 cm)."); return; }
+    userData.pesoKg = kg;
+    userData.alturaCm = cm;
     userData.objetivo = document.getElementById('editObjetivo').value;
-    userData.movimiento.cant = parseFloat(document.getElementById('editMovCantidad').value || 0);
+    userData.movimiento.cant = parseFloat(document.getElementById('editMovCantidad').value || 0) || 0;
     userData.movimiento.unidad = document.getElementById('editMovUnidad').value;
-    calcularMetabolismo(); cerrarModalPerfil();
+    calcularMetabolismo(); cerrarModalPerfil();   // recalcula, guarda y repinta todo (encabezado incluido)
     alert("Perfil y rutina guardados correctamente.");
 }
 function resetAppTotal() { if(confirm("⚠ ¿Borrar todos los datos para siempre?")) { localStorage.removeItem('nutrifit_user'); location.reload(); } }
@@ -895,7 +928,7 @@ function guardarRegistroProgreso() {
     let grasa = parseFloat(document.getElementById('progGrasa').value || 0);
     let musculo = parseFloat(document.getElementById('progMusculo').value || 0);
     let inputFoto = document.getElementById('progFoto');
-    if(!peso) { alert("Ingresa al menos tu peso."); return; }
+    if(!esNum(peso, 20, 400)) { alert("Ingresa un peso válido (20–400 kg)."); return; }
 
     userData.pesoKg = peso; calcularMetabolismo(); 
     let nuevoRegistro = { fecha: new Date().toISOString(), peso: peso, grasa: grasa > 0 ? grasa : null, musculo: musculo > 0 ? musculo : null, foto: null };
@@ -979,68 +1012,6 @@ function alternarFavorito() {
     if(tabActual === 'favoritos') renderizarListasDelTab();
 }
 
-function crearRecetaCompuesta(nombreReceta, listaIngredientes) {
-    if (!listaIngredientes || listaIngredientes.length === 0) return;
-
-    let nuevaReceta = {
-        id: 'rec_' + Date.now(),
-        nombre: nombreReceta,
-        tipo: 'compuesta',
-        ingredientes: listaIngredientes, // Array de punteros: [{id: "bs_001", cantidad: 200}]
-        macrosResumen: calcularTotalesDeReceta(listaIngredientes)
-    };
-
-    if(!userData.biblioteca.recetas) userData.biblioteca.recetas = [];
-    userData.biblioteca.recetas.push(nuevaReceta);
-    guardarDatosLocales();
-}
-
-function calcularTotalesDeReceta(ingredientes) {
-    let totales = { kcal: 0, p: 0, c: 0, f: 0 };
-    
-    ingredientes.forEach(ing => {
-        let alimentoBase = buscarAlimentoPorId(ing.id); 
-        if(alimentoBase) {
-            let factor = ing.cantidad / alimentoBase.baseGramos;
-            totales.kcal += alimentoBase.kcal * factor;
-            totales.p += alimentoBase.p * factor;
-            totales.c += alimentoBase.c * factor;
-            totales.f += alimentoBase.f * factor;
-        }
-    });
-    return totales;
-}
-
-function buscarAlimentoPorId(idStr) {
-    // 1. Busca en la Base Semilla (Hardcoded)
-    let encontrado = baseSemilla.find(a => a.id === idStr);
-    if(encontrado) return encontrado;
-    
-    // 2. Busca en Creaciones Propias
-    if(userData.biblioteca.creaciones) {
-        encontrado = userData.biblioteca.creaciones.find(a => a.id === idStr);
-        if(encontrado) return encontrado;
-    }
-    
-    // 3. Busca en Recetas Compuestas
-    if(userData.biblioteca.recetas) {
-        encontrado = userData.biblioteca.recetas.find(a => a.id === idStr);
-        if(encontrado) {
-            // Adaptamos el formato de retorno para que coincida con los alimentos simples
-            return {
-                id: encontrado.id,
-                nombre: encontrado.nombre,
-                kcal: encontrado.macrosResumen.kcal,
-                p: encontrado.macrosResumen.p,
-                c: encontrado.macrosResumen.c,
-                f: encontrado.macrosResumen.f,
-                baseGramos: 1 // Para las recetas, el factor se calcula por unidad/porción
-            };
-        }
-    }
-    
-    return null;
-}
 // ==========================================
 // RENDERIZADO DE TABS (PESTAÑAS)
 // ==========================================
@@ -1097,23 +1068,18 @@ function renderizarListasDelTab() {
         tempListaTab = userData.biblioteca.favoritos || [];
         if(tempListaTab.length === 0) html = `<p class="text-xs text-center text-slate-400 mt-6 font-medium">Aún no tienes alimentos favoritos.</p>`;
     } else if (tabActual === 'creaciones') {
-        tempListaTab = alimentosPersonalizados || [];
+        tempListaTab = Alimentos.lista.filter(a => a.origen !== 'semilla');
         if(tempListaTab.length === 0) html = `<p class="text-xs text-center text-slate-400 mt-6 font-medium">No has creado alimentos propios aún.</p>`;
     }
 
-    tempListaTab.forEach((item, index) => {
-        let baseNormalizada = item.cantidadBase || item.baseGramos || 100;
-        let unidadMedida = item.unidadMedida || 'g';
+    tempListaTab.forEach((raw, index) => {
+        const item = normalizarAlimento(raw);
+        const unidadMedida = item.unidadMedida;
 
-        // Lógica Smart Preset: Leer la cantidad preferida si existe
-        let cantidadAMostrar = item.cantidadPreferida ? item.cantidadPreferida : baseNormalizada;
-        
-        // Recalcular kcal visuales según la porción que se va a mostrar
-        let factor = (unidadMedida === 'g') ? (cantidadAMostrar / baseNormalizada) : cantidadAMostrar;
-        let kcalVisuales = Math.round(item.kcal * factor);
-
-        // Cambiamos la etiqueta para dar un feedback visual de que es una porción memorizada
-        let textoPorcion = item.cantidadPreferida ? `Tu porción: ${cantidadAMostrar}${unidadMedida}` : `Base: ${baseNormalizada}${unidadMedida}`;
+        // Smart Preset: leer la cantidad preferida si existe
+        const cantidadAMostrar = item.cantidadPreferida ? item.cantidadPreferida : item.cantidadBase;
+        const kcalVisuales = Math.round(macrosDe(item, cantidadAMostrar).kcal);
+        const textoPorcion = item.cantidadPreferida ? `Tu porción: ${cantidadAMostrar}${unidadMedida}` : `Base: ${item.cantidadBase}${unidadMedida}`;
 
         html += `
         <div onclick='seleccionarItemTab(${index})' class="flex justify-between items-center p-3.5 mb-2 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer rounded-2xl border border-slate-100 dark:border-slate-700/60 transition-all bg-white dark:bg-slate-900/40 shadow-sm group">
@@ -1141,24 +1107,15 @@ function renderizarListasDelTab() {
 function seleccionarItemTab(index) {
     let item = tempListaTab[index];
     if(!item) return;
-    
-    let objNormalizado = {
-        id: item.id || null, 
-        nombre: item.nombre, 
-        unidadMedida: item.unidadMedida || 'g',
-        cantidadBase: item.cantidadBase || 100, 
+
+    const objNormalizado = normalizarAlimento({
+        ...item,
+        id: item.id || null,
         cantidadPreferida: item.cantidadPreferida || null,
-        kcal: item.kcal,
-        p: item.p || 0, 
-        c: item.c || 0, 
-        f: item.f || 0,
         micros: item.micros || { fibra: 0, azucar: 0, sodio: 0, potasio: 0, calcio: 0, hierro: 0, magnesio: 0, zinc: 0, vita: 0, vitc: 0, vitd: 0, vitb12: 0, folato: 0 }
-    };
+    });
 
-    // Si estamos armando una receta, lo desviamos limpiamente aquí:
-    if (manejarSeleccionParaReceta(objNormalizado)) return;
-
-    prepararRegistro(objNormalizado);
+    prepararRegistro(objNormalizado);   // si hay una receta en curso, prepararRegistro lo desvía al creador de recetas
 }
 
 //=================================
@@ -1247,40 +1204,37 @@ function abrirBuscadorIngrediente() {
     cambiarTabRegistro('favoritos'); 
 }
 
-// NUEVA FUNCIÓN: Reemplaza al "secuestro" de prepararRegistro
+// Única implementación del "agregar ingrediente a receta" (antes duplicada en prepararRegistro)
 function manejarSeleccionParaReceta(itemSeleccionado) {
     if (!modoAgregandoReceta) return false;
+    const item = normalizarAlimento(itemSeleccionado);
 
-    let cant = prompt(`¿Qué cantidad de ${itemSeleccionado.nombre} (${itemSeleccionado.unidadMedida || 'g'}) vas a usar?`, "100");
-    
+    const defaultCant = item.cantidadPreferida || item.cantidadBase || 100;
+    let cant = prompt(`¿Qué cantidad de ${item.nombre} (${item.unidadMedida}) vas a usar?`, defaultCant);
+
     if (cant !== null && !isNaN(cant) && parseFloat(cant) > 0) {
-        let cantidadUsada = parseFloat(cant);
-        let base = itemSeleccionado.cantidadBase || 100;
-        let factor = (itemSeleccionado.unidadMedida === 'g') ? (cantidadUsada / base) : cantidadUsada;
-        
-        let ing = {
-            nombre: itemSeleccionado.nombre,
+        const cantidadUsada = parseFloat(cant);
+        const m = macrosDe(item, cantidadUsada);
+        ingredientesRecetaTemp.push({
+            nombre: item.nombre,
             cantidad: cantidadUsada,
-            unidadMedida: itemSeleccionado.unidadMedida || 'g',
-            kcal: itemSeleccionado.kcal * factor,
-            p: (itemSeleccionado.p || 0) * factor,
-            c: (itemSeleccionado.c || 0) * factor,
-            f: (itemSeleccionado.f || 0) * factor
-        };
-        ingredientesRecetaTemp.push(ing);
+            unidadMedida: item.unidadMedida,
+            pesoPorUnidad: item.pesoPorUnidad || null,
+            kcal: m.kcal, p: m.p, c: m.c, f: m.f
+        });
     }
-    
+
     // Restaurar interfaz del panel de creación
     modoAgregandoReceta = false;
     document.getElementById('regTituloSeccion').innerText = tituloOriginalPanel;
     document.getElementById('tab-creaciones').classList.remove('hidden');
     document.getElementById('tab-crear').classList.remove('hidden');
     document.getElementById('buscadorAlimento').placeholder = "🔍 Buscar alimento o código de barras...";
-    
+
     cambiarTabRegistro('crear');
     cambiarModoCreacion('receta');
     actualizarResumenReceta();
-    return true; 
+    return true;
 }
 
 function actualizarResumenReceta() {
@@ -1367,8 +1321,7 @@ function guardarRecetaCompuesta() {
         };
     }
 
-    alimentosPersonalizados.push(recetaNormalizada);
-    localStorage.setItem('nutrifit_alimentos', JSON.stringify(alimentosPersonalizados));
+    recetaNormalizada = Alimentos.agregar(recetaNormalizada);
 
     document.getElementById('recetaName').value = '';
     ingredientesRecetaTemp = [];
