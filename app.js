@@ -375,6 +375,17 @@ function finalizarOnboarding() {
     userData.objetivo = document.getElementById('objetivo').value;
     userData.movimiento = { cant: parseFloat(document.getElementById('movimientoCantidad').value || 0), unidad: document.getElementById('movimientoUnidad').value };
     
+    // CORRECCIÓN: Guardar la edad correctamente para que el cálculo BMR funcione
+    let fechaNacInput = document.getElementById('fechaNac').value;
+    if(fechaNacInput) {
+        let f = new Date(fechaNacInput);
+        let hoy = new Date(); let anos = hoy.getFullYear() - f.getFullYear();
+        if (hoy.getMonth() < f.getMonth() || (hoy.getMonth() === f.getMonth() && hoy.getDate() < f.getDate())) anos--;
+        userData.edad = anos;
+    } else {
+        userData.edad = 18; // Fallback de seguridad
+    }
+    
     let mMusc = parseFloat(document.getElementById('masaMuscular').value || 0);
     if(mMusc > 0 && document.getElementById('unidadMusculo').value === 'lbs') mMusc = mMusc * 0.453592;
     let pGrasa = parseFloat(document.getElementById('porcentajeGrasa').value || 0);
@@ -474,7 +485,10 @@ function actualizarUIDashboard() {
     document.getElementById('tdeeBreakdown').innerHTML = `<div class="flex justify-between"><span>Tasa Basal:</span> <span>${Math.round(c.bmr)} kcal</span></div><div class="flex justify-between"><span>Pasos/Distancia:</span> <span>+${Math.round(c.neatKcal)} kcal</span></div><div class="flex justify-between"><span>Deporte Regular:</span> <span>+${Math.round(c.teaKcal)} kcal/día</span></div>${extraHTML}`;
     
     document.getElementById('dashTDEE').innerText = `${Math.round(metaDia.totalKcal)} kcal`; 
-    document.getElementById('ui-goal').innerText = `Objetivo: ${Math.round(metaDia.totalKcal)} kcal`;
+    
+    // CORRECCIÓN: Control de seguridad para evitar que crashee si se elimina del HTML
+    let uiGoalElement = document.getElementById('ui-goal');
+    if (uiGoalElement) uiGoalElement.innerText = `Objetivo: ${Math.round(metaDia.totalKcal)} kcal`;
     
     // Sumamos la actividad extra a los hidratos (fuente de energía prioritaria del músculo)
     let extraCarbs = Math.round(metaDia.extraKcal / 4);
@@ -1144,26 +1158,27 @@ function seleccionarItemTab(index) {
 //================================
 
 function evaluarDia() {
-    let metaKal = userData.calculos.metaDiaria;
+    // CORRECCIÓN: Invoca a la meta específica de la fecha elegida
+    let metaKcal = obtenerMetaDelDia(fechaSeleccionada).totalKcal;
     let comidasDia = userData.comidas[fechaSeleccionada] || [];
-    let sumKal = comidasDia.reduce((acc, c) => acc + c.kal, 0);
+    
+    // CORRECCIÓN: La propiedad correcta es kcal, no kal
+    let sumKcal = comidasDia.reduce((acc, c) => acc + c.kcal, 0);
 
-    //Si no comio nada aun
-    if (sumKal === 0) {
-        mostrarMensajeDinamico("<b>¡El día está en blanco!</b> <br><br>Aún no has registrado ninguna comida. Anota tus alimentos para poder prgresar, tu puedes!");
+    if (sumKcal === 0) {
+        mostrarMensajeDinamico("<b>¡El día está en blanco!</b> <br><br>Aún no has registrado ninguna comida. ¡Anota tus alimentos para poder progresar, tú puedes!");
         return;
     }
 
-    let pct = (sumKal / metaKal) * 100;
+    let pct = (sumKcal / metaKcal) * 100;
     let mensaje = "";
 
-    //Logica de gamificacion y motivacion
     if (pct < 85) {
-        mensaje = "<b>¡Aún falta un poco!</b> <br><br>Estas por debajo de tu meta diaría, todavía puedes registrar tus alimentos! Recuerda que no comer puede frenar el metabolismo y dificultar la recuperacion muscular. A progresar!";
+        mensaje = "<b>¡Aún falta un poco!</b> <br><br>Estás por debajo de tu meta diaria, ¡todavía puedes registrar tus alimentos! Recuerda que no comer puede frenar el metabolismo y dificultar la recuperación muscular. ¡A progresar!";
     } else if (pct >= 85 && pct <=110) {
-        mensaje = "<b>¡Día Perfecto!</b> <br><br>Has clavado tus calorías y macros en la zona óptima. Esta es la actitud para lograr nuestros objetivos! !A descansar y continuar mañana!";
+        mensaje = "<b>¡Día Perfecto!</b> <br><br>Has clavado tus calorías y macros en la zona óptima. ¡Esta es la actitud para lograr nuestros objetivos! ¡A descansar y continuar mañana!";
     } else {
-        mensaje ="<b>¡Hoy hubo energía de más! <br><br>Te pasaste un poco del presupuesto calórico hoy, pero es normal! Esta energía servira para rendir mejor el dia de mañana. ¡A compensar y seguir enfocados con todo!";
+        mensaje ="<b>¡Hoy hubo energía de más!</b> <br><br>Te pasaste un poco del presupuesto calórico hoy, ¡pero es normal! Esta energía servirá para rendir mejor el día de mañana. ¡A compensar y seguir enfocados con todo!";
     }
 
     mostrarMensajeDinamico(mensaje);
