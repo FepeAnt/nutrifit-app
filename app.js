@@ -1400,3 +1400,4 @@ function accionDespuesDeCrear(quiereRegistrar) {
         prepararRegistro(ultimoElementoCreado);
     }
 }
+
