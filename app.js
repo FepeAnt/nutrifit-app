@@ -80,11 +80,18 @@ function cambiarFechaSeleccionada(fechaStr) {
 function actualizarVistaFecha() {
     let hoyIso = obtenerFechaIso(new Date());
     let label = (fechaSeleccionada === hoyIso) ? 'Hoy' : new Date(fechaSeleccionada + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-    document.getElementById('dashLabelHoy').innerText = label;
-    document.getElementById('ui-fecha-titulo').innerText = (fechaSeleccionada === hoyIso) ? 'Presupuesto calórico de hoy' : `Presupuesto para el ${label}`;
+    
+    let dashLabel = document.getElementById('dashLabelHoy');
+    if (dashLabel) dashLabel.innerText = label;
+    
+    // CORRECCIÓN: Control de seguridad para evitar el crasheo
+    let titulo = document.getElementById('ui-fecha-titulo');
+    if (titulo) {
+        titulo.innerText = (fechaSeleccionada === hoyIso) ? 'Presupuesto calórico de hoy' : `Presupuesto para el ${label}`;
+    }
     
     actualizarAguaUI();
-    actualizarUIDashboard(); // Esto actualiza el Desglose y los Macros de esa fecha
+    actualizarUIDashboard(); 
     recalcularComidasTotales();
     calcularRachaGeneral();
 }
@@ -1416,3 +1423,14 @@ function accionDespuesDeCrear(quiereRegistrar) {
     }
 }
 
+// Función auxiliar para el Onboarding (selector de altura)
+function toggleAlturaInputs() {
+    let u = document.getElementById('unidadAltura').value;
+    if(u === 'ft') {
+        document.getElementById('alturaFtContainer').classList.remove('hidden');
+        document.getElementById('alturaCm').classList.add('hidden');
+    } else {
+        document.getElementById('alturaFtContainer').classList.add('hidden');
+        document.getElementById('alturaCm').classList.remove('hidden');
+    }
+}
