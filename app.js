@@ -3,6 +3,14 @@ let userData = {
     biblioteca: { favoritos: [], creaciones: [], recetas: [], recientes: [] }
 };
 
+let modoVistaDashboard = 'restantes'; // Puede ser 'restantes' o 'totales'
+
+function alternarVistaDashboard() {
+    modoVistaDashboard = modoVistaDashboard === 'restantes' ? 'totales' : 'restantes';
+    recalcularComidasTotales(); 
+}
+
+
 const baseSemilla = [
     { id: "bs_001", nombre: "Pechuga de Pollo cruda", kcal: 110, p: 23, c: 0, f: 1.2, baseGramos: 100 },
     { id: "bs_002", nombre: "Arroz Blanco cocido", kcal: 130, p: 2.7, c: 28, f: 0.3, baseGramos: 100 },
@@ -221,20 +229,29 @@ function cerrarModalRacha() { document.getElementById('modalRacha').classList.re
 
 function renderizarSeccionesComidas() {
     let container = document.getElementById('seccionesComidasContainer');
-    let html = '';
+    if(!container) return;
+    container.innerHTML = '';
+    
     categoriasComida.forEach(cat => {
-        html += `
-        <div class="bg-white rounded-2xl shadow-sm p-5 border border-gray-100">
+        container.innerHTML += `
+        <div class="bg-white dark:bg-slate-900 rounded-[1.5rem] p-4 shadow-sm border border-slate-100 dark:border-slate-800">
             <div class="flex justify-between items-center mb-3">
-                <h3 class="font-bold text-lg text-slate-800"><i class="fa-solid ${cat.icono} text-blue-600 mr-2"></i>${cat.nombre}</h3>
-                <button onclick="abrirPanelRegistro('${cat.id}', '${cat.nombre}')" class="bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">+ Añadir alimento</button>
+                <div>
+                    <h3 class="font-bold text-slate-800 dark:text-white text-lg flex items-center gap-2">
+                        <i class="fa-solid ${cat.icono} text-slate-400"></i> ${cat.nombre}
+                    </h3>
+                    <!-- AQUÍ SE INYECTAN LOS MACROS PEQUEÑOS -->
+                    <span id="kcal-${cat.id}" class="text-[11px] font-semibold text-slate-400">🔥 0 kcal • 0 P | 0 C | 0 G</span>
+                </div>
+                <button onclick="abrirPanelRegistro('${cat.id}')" class="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-emerald-500 hover:text-white transition-all flex items-center justify-center font-bold">
+                    <i class="fa-solid fa-plus"></i>
+                </button>
             </div>
-            <div id="lista-${cat.id}" class="space-y-2">
-                <p class="text-gray-400 text-xs italic">Sin alimentos registrados.</p>
-            </div>
+            <div id="lista-${cat.id}" class="space-y-2"></div>
         </div>`;
     });
-    container.innerHTML = html;
+    
+    recalcularComidasTotales();
 }
 
 function abrirPanelRegistro(catId, catNombre) {
@@ -695,19 +712,28 @@ function borrarComida(id) {
 }
 
 function recalcularComidasTotales() {
-    let sumKcal = 0, sumM = { p: 0, c: 0, f: 0 }; 
-    let sumMicro = { fibra: 0, azucar: 0, sodio: 0, potasio: 0, calcio: 0, hierro: 0, magnesio: 0, zinc: 0, vita: 0, vitc: 0, vitd: 0, vitb12: 0, folato: 0 };
-    
-    let htmlListas = { desayuno: '', almuerzo: '', merienda: '', cena: '', snacks: '' };
-    let comidasDia = userData.comidas[fechaSeleccionada] || [];
+    let sumKcal = 0, sumP = 0, sumC = 0, sumF = 0;
+    let comidasDelDia = userData.comidas[fechaSeleccionada] || [];
 
-    comidasDia.forEach(c => { 
-        sumKcal += c.kcal; 
-        sumM.p += c.macros.p; sumM.c += c.macros.c; sumM.f += c.macros.f; 
+    let macrosPorCategoria = {
+        desayuno: { k: 0, p: 0, c: 0, f: 0 },
+        almuerzo: { k: 0, p: 0, c: 0, f: 0 },
+        merienda: { k: 0, p: 0, c: 0, f: 0 },
+        cena: { k: 0, p: 0, c: 0, f: 0 },
+        snacks: { k: 0, p: 0, c: 0, f: 0 }
+    };
+    let htmlListas = { desayuno: '', almuerzo: '', merienda: '', cena: '', snacks: '' };
+
+    comidasDelDia.forEach(c => {
+        sumKcal += c.kcal;
+        sumP += c.macros.p; sumC += c.macros.c; sumF += c.macros.f;
         let cat = c.categoria || 'snacks'; 
 
-        if(c.micros) {
-            Object.keys(sumMicro).forEach(k => { sumMicro[k] += c.micros[k] || 0; });
+        if (macrosPorCategoria[cat]) {
+            macrosPorCategoria[cat].k += c.kcal;
+            macrosPorCategoria[cat].p += c.macros.p;
+            macrosPorCategoria[cat].c += c.macros.c;
+            macrosPorCategoria[cat].f += c.macros.f;
         }
 
         htmlListas[cat] += `
@@ -723,56 +749,44 @@ function recalcularComidasTotales() {
         </div>`;
     });
 
-    categoriasComida.forEach(cat => {
-        let elem = document.getElementById(`lista-${cat.id}`);
-        if(elem) {
-            elem.innerHTML = htmlListas[cat.id] || `<p class="text-gray-400 dark:text-slate-500 text-xs italic">Sin alimentos registrados.</p>`;
+    ['desayuno', 'almuerzo', 'merienda', 'cena', 'snacks'].forEach(cat => {
+        let elKcal = document.getElementById(`kcal-${cat}`);
+        if (elKcal) {
+            let m = macrosPorCategoria[cat];
+            elKcal.innerText = `🔥 ${Math.round(m.k)} kcal • ${Math.round(m.p)} P | ${Math.round(m.c)} C | ${Math.round(m.f)} G`;
         }
+        let elem = document.getElementById(`lista-${cat}`);
+        if(elem) elem.innerHTML = htmlListas[cat] || `<p class="text-gray-400 dark:text-slate-500 text-xs italic">Sin alimentos registrados.</p>`;
     });
-    
+
     let metaDia = obtenerMetaDelDia(fechaSeleccionada);
     let metaKcal = metaDia.totalKcal; 
-    let pctKcal = (sumKcal / metaKcal) * 100;
-    document.getElementById('ui-consumed').innerText = Math.round(sumKcal); 
-    document.getElementById('ui-remaining').innerText = Math.round(metaKcal - sumKcal); 
-    
-    let calBar = document.getElementById('ui-progress');
-    calBar.style.width = Math.min(pctKcal, 100) + '%';
-    calBar.className = 'h-4 rounded-full transition-all duration-500 ' + obtenerClaseSemaforo(pctKcal);
-    
     let metaP = userData.calculos.macrosBase.p;
     let metaC = userData.calculos.macrosBase.c + Math.round(metaDia.extraKcal / 4);
     let metaF = userData.calculos.macrosBase.f;
 
-    document.getElementById('ui-prot-c').innerText = Number(sumM.p.toFixed(1)); 
-    let protBar = document.getElementById('ui-prot-bar');
-    protBar.style.width = Math.min((sumM.p / metaP) * 100, 100) + '%';
-    protBar.className = 'h-1.5 rounded-full transition-all duration-500 ' + obtenerClaseSemaforo((sumM.p / metaP) * 100);
+    let pctKcal = (sumKcal / metaKcal) * 100;
+    let barra = document.getElementById('barraProgresoKcal');
+    if(barra) barra.style.width = `${Math.min(pctKcal, 100)}%`;
 
-    document.getElementById('ui-carb-c').innerText = Number(sumM.c.toFixed(1)); 
-    let carbBar = document.getElementById('ui-carb-bar');
-    carbBar.style.width = Math.min((sumM.c / metaC) * 100, 100) + '%';
-    carbBar.className = 'h-1.5 rounded-full transition-all duration-500 ' + obtenerClaseSemaforo((sumM.c / metaC) * 100);
+    let tituloCabecera = document.getElementById('vistaKcalTitulo');
+    let numeroCabecera = document.getElementById('vistaKcalNumero');
 
-    document.getElementById('ui-fat-c').innerText = Number(sumM.f.toFixed(1));
-    let fatBar = document.getElementById('ui-fat-bar');
-    fatBar.style.width = Math.min((sumM.f / metaF) * 100, 100) + '%';
-    fatBar.className = 'h-1.5 rounded-full transition-all duration-500 ' + obtenerClaseSemaforo((sumM.f / metaF) * 100);
-
-    document.getElementById('ui-micro-fibra').innerText = Number(sumMicro.fibra.toFixed(1)) + ' g';
-    document.getElementById('ui-micro-azucar').innerText = Number(sumMicro.azucar.toFixed(1)) + ' g';
-    document.getElementById('ui-micro-sodio').innerText = Math.round(sumMicro.sodio) + ' mg';
-    document.getElementById('ui-micro-potasio').innerText = Math.round(sumMicro.potasio) + ' mg';
-    document.getElementById('ui-micro-calcio').innerText = Math.round(sumMicro.calcio) + ' mg';
-    document.getElementById('ui-micro-hierro').innerText = Number(sumMicro.hierro.toFixed(1)) + ' mg';
-    document.getElementById('ui-micro-magnesio').innerText = Math.round(sumMicro.magnesio) + ' mg';
-    document.getElementById('ui-micro-zinc').innerText = Number(sumMicro.zinc.toFixed(1)) + ' mg';
-    document.getElementById('ui-micro-vita').innerText = Math.round(sumMicro.vita) + ' mcg';
-    document.getElementById('ui-micro-vitc').innerText = Math.round(sumMicro.vitc) + ' mg';
-    document.getElementById('ui-micro-vitd').innerText = Math.round(sumMicro.vitd) + ' IU';
-    document.getElementById('ui-micro-vitb12').innerText = Number(sumMicro.vitb12.toFixed(2)) + ' mcg';
-    document.getElementById('ui-micro-folato').innerText = Math.round(sumMicro.folato) + ' mcg';
-
+    if(tituloCabecera && numeroCabecera) {
+        if (modoVistaDashboard === 'restantes') {
+            tituloCabecera.innerHTML = 'kcal restantes <i class="fa-solid fa-chevron-right text-[10px]"></i>';
+            numeroCabecera.innerText = Math.max(0, Math.round(metaKcal - sumKcal));
+            document.getElementById('ui-prot-t').innerText = `${Math.max(0, Math.round(metaP - sumP))}g`;
+            document.getElementById('ui-carb-t').innerText = `${Math.max(0, Math.round(metaC - sumC))}g`;
+            document.getElementById('ui-fat-t').innerText = `${Math.max(0, Math.round(metaF - sumF))}g`;
+        } else {
+            tituloCabecera.innerHTML = 'kcal consumidas <i class="fa-solid fa-chevron-right text-[10px]"></i>';
+            numeroCabecera.innerHTML = `<span class="text-slate-400 text-3xl">${Math.round(sumKcal)} /</span> ${Math.round(metaKcal)}`;
+            document.getElementById('ui-prot-t').innerText = `${Math.round(sumP)} / ${metaP}g`;
+            document.getElementById('ui-carb-t').innerText = `${Math.round(sumC)} / ${metaC}g`;
+            document.getElementById('ui-fat-t').innerText = `${Math.round(sumF)} / ${metaF}g`;
+        }
+    }
     calcularRachaGeneral();
 }
 
@@ -1386,4 +1400,3 @@ function accionDespuesDeCrear(quiereRegistrar) {
         prepararRegistro(ultimoElementoCreado);
     }
 }
-

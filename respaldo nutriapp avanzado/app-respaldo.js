@@ -31,6 +31,14 @@ window.onload = () => {
         if(!userData.recordatorioDias) userData.recordatorioDias = 7;
         if(!userData.comidas || Array.isArray(userData.comidas)) userData.comidas = {}; 
         if(!userData.aguaMl || typeof userData.aguaMl === 'number') userData.aguaMl = {};
+        
+        // MIGRACIÓN: Actividad extra ahora se guarda por fecha
+        if(!userData.actividadExtra) userData.actividadExtra = {};
+        if(userData.actividadExtraHoy) { 
+            userData.actividadExtra[obtenerFechaIso(new Date())] = userData.actividadExtraHoy;
+            delete userData.actividadExtraHoy;
+        }
+
         if(!userData.biblioteca) {
             userData.biblioteca = { favoritos: [], creaciones: [], recetas: [], recientes: [] };
             guardarDatosLocales();
@@ -68,6 +76,7 @@ function actualizarVistaFecha() {
     document.getElementById('ui-fecha-titulo').innerText = (fechaSeleccionada === hoyIso) ? 'Presupuesto calórico de hoy' : `Presupuesto para el ${label}`;
     
     actualizarAguaUI();
+    actualizarUIDashboard(); // Esto actualiza el Desglose y los Macros de esa fecha
     recalcularComidasTotales();
     calcularRachaGeneral();
 }
@@ -104,7 +113,7 @@ function evaluarEstadoDia(iso) {
     if(comidasDia.length === 0) return 'bg-slate-300 dark:bg-slate-700'; 
 
     let sumKcal = comidasDia.reduce((acc, c) => acc + c.kcal, 0);
-    let meta = userData.calculos?.metaDiaria || 2000;
+    let meta = obtenerMetaDelDia(iso).totalKcal; // META AISLADA
     let pct = (sumKcal / meta) * 100;
 
     if(pct >= 90 && pct <= 110) return 'bg-emerald-500'; 
@@ -164,7 +173,7 @@ function calcularRachaGeneral() {
         
         rachaActual++;
         let sumKcal = comidas.reduce((acc, c) => acc + c.kcal, 0);
-        let meta = userData.calculos?.metaDiaria || 2000;
+        let meta = obtenerMetaDelDia(iso).totalKcal; // META AISLADA
         let pct = (sumKcal / meta) * 100;
 
         if(pct >= 90 && pct <= 110) optimos++;
@@ -306,7 +315,28 @@ function calcularEdadEnVivo() {
     if (hoy.getMonth() < fecha.getMonth() || (hoy.getMonth() === fecha.getMonth() && hoy.getDate() < fecha.getDate())) { anos--; }
     userData.edad = anos; document.getElementById('edadMostrada').innerText = `Edad exacta: ${anos} años`;
 }
-function toggleAlturaInputs() { document.getElementById('alturaCm').classList.toggle('hidden', document.getElementById('unidadAltura').value !== 'cm'); document.getElementById('alturaFtContainer').classList.toggle('hidden', document.getElementById('unidadAltura').value === 'cm'); }
+
+function toggleCrearBaseInput() {
+    let u = document.getElementById('crearUnidad').value;
+    let lbl = document.getElementById('lblCantidadBase');
+    let txt = document.getElementById('lblUnidadBaseTxt');
+    let inputBase = document.getElementById('crearCantidadBase');
+    let contPeso = document.getElementById('containerPesoUnidad');
+    let txtNombre = document.getElementById('txtNombreUnidad');
+
+    if (u === 'g') {
+        lbl.innerText = "Macros para (g)";
+        txt.innerText = 'g';
+        inputBase.value = 100;
+        contPeso.classList.add('hidden');
+    } else {
+        lbl.innerText = "Macros para";
+        txt.innerText = u; 
+        inputBase.value = 1;
+        contPeso.classList.remove('hidden');
+        txtNombre.innerText = u;
+    }
+}
 
 function agregarDeporteRoutine() {
     const select = document.getElementById('deporteSelect'); const dias = parseFloat(document.getElementById('deporteDias').value); const min = parseFloat(document.getElementById('deporteMinutos').value);
@@ -343,38 +373,55 @@ function finalizarOnboarding() {
     guardarDatosLocales(); location.reload(); 
 }
 
+// NUEVA FUNCIÓN: Calcula la meta para un día específico
+function obtenerMetaDelDia(fechaIso) {
+    let base = userData.calculos?.metaBase || 2000;
+    let extra = 0;
+    let actividades = userData.actividadExtra[fechaIso] || [];
+    
+    actividades.forEach(act => {
+        // Corrección clínica: Usamos METs netos (met - 1) para no sumar el metabolismo basal dos veces
+        extra += (Math.max(0, act.met - 1) * userData.pesoKg * (act.min / 60));
+    });
+    
+    return { totalKcal: base + extra, extraKcal: extra, baseKcal: base };
+}
+
 function calcularMetabolismo() {
     let bmr = (10 * userData.pesoKg) + (6.25 * userData.alturaCm) - (5 * userData.edad);
     bmr = userData.genero === 'm' ? bmr + 5 : bmr - 161;
+    
     let neatKcal = 0;
     if(userData.movimiento.cant > 0) {
         if(userData.movimiento.unidad === 'pasos') neatKcal = (userData.movimiento.cant / 1000) * 0.04 * userData.pesoKg * 10; 
         else if(userData.movimiento.unidad === 'km') neatKcal = userData.movimiento.cant * userData.pesoKg * 0.75;
         else if(userData.movimiento.unidad === 'mi') neatKcal = (userData.movimiento.cant * 1.609) * userData.pesoKg * 0.75;
     }
+    
     let teaKcal = 0;
-    userData.rutinaDeportes.forEach(dep => { teaKcal += (dep.met * userData.pesoKg * ((dep.dias * dep.min) / 60 / 7)); });
-    let mantenimiento = bmr + neatKcal + teaKcal + (bmr * 0.1);
+    userData.rutinaDeportes.forEach(dep => { 
+        // MET neto para deportes fijos
+        teaKcal += (Math.max(0, dep.met - 1) * userData.pesoKg * ((dep.dias * dep.min) / 60 / 7)); 
+    });
+    
+    let mantenimiento = bmr + neatKcal + teaKcal + (bmr * 0.1); // +10% TEF
     let objetivoKcal = mantenimiento;
     if(userData.objetivo === 'deficit') objetivoKcal -= 500;
     if(userData.objetivo === 'volumen') objetivoKcal += 300;
     if(userData.objetivo === 'recomposicion') objetivoKcal -= 200;
 
-    let extraHoyKcal = 0;
-    userData.actividadExtraHoy.forEach(act => { extraHoyKcal += (act.met * userData.pesoKg * (act.min / 60)); });
-
-    let metaDiaria = objetivoKcal + extraHoyKcal;
     let proT = userData.pesoKg * (userData.objetivo === 'volumen' ? 2.0 : 2.2); 
     let fatT = userData.pesoKg * 0.9;
-    let carbT = (metaDiaria - (proT*4) - (fatT*9)) / 4;
+    let carbT = (objetivoKcal - (proT*4) - (fatT*9)) / 4;
     if(carbT < 0) carbT = 0;
 
     let aguaMeta = Math.round(userData.pesoKg * 35);
-    if(userData.rutinaDeportes.length > 0 || userData.actividadExtraHoy.length > 0) aguaMeta += 500;
+    if(userData.rutinaDeportes.length > 0) aguaMeta += 500;
 
+    // Guardamos las bases fijas
     userData.calculos = { 
-        bmr, neatKcal, teaKcal, extraHoyKcal, metaDiaria, aguaMeta, 
-        macros: { p: Math.round(proT), c: Math.round(carbT), f: Math.round(fatT) } 
+        bmr, neatKcal, teaKcal, metaBase: objetivoKcal, aguaMeta, 
+        macrosBase: { p: Math.round(proT), c: Math.round(carbT), f: Math.round(fatT) } 
     };
     
     actualizarUIDashboard(); 
@@ -382,18 +429,45 @@ function calcularMetabolismo() {
     guardarDatosLocales();
 }
 
-function actualizarUIDashboard() {
-    let c = userData.calculos;
-    document.getElementById('tdeeBreakdown').innerHTML = `<div class="flex justify-between"><span>Tasa Basal:</span> <span>${Math.round(c.bmr)} kcal</span></div><div class="flex justify-between"><span>Pasos/Distancia:</span> <span>+${Math.round(c.neatKcal)} kcal</span></div><div class="flex justify-between"><span>Deporte Regular:</span> <span>+${Math.round(c.teaKcal)} kcal/día</span></div>${c.extraHoyKcal > 0 ? `<div class="flex justify-between text-orange-500 font-bold"><span>Extra de Hoy:</span> <span>+${Math.round(c.extraHoyKcal)} kcal</span></div>` : ''}`;
-    document.getElementById('dashTDEE').innerText = `${Math.round(c.metaDiaria)} kcal`; document.getElementById('ui-goal').innerText = `Objetivo: ${Math.round(c.metaDiaria)} kcal`;
-    document.getElementById('ui-prot-t').innerText = c.macros.p + 'g'; document.getElementById('ui-carb-t').innerText = c.macros.c + 'g'; document.getElementById('ui-fat-t').innerText = c.macros.f + 'g';
-    recalcularComidasTotales();
+function agregarActividadExtra() {
+    let select = document.getElementById('extraActividad'); 
+    let min = parseFloat(document.getElementById('extraMinutos').value); 
+    if(!min) return;
+    
+    if(!userData.actividadExtra[fechaSeleccionada]) {
+        userData.actividadExtra[fechaSeleccionada] = [];
+    }
+    
+    userData.actividadExtra[fechaSeleccionada].push({ 
+        nombre: select.options[select.selectedIndex].text, 
+        met: parseFloat(select.value), 
+        min 
+    });
+    
+    document.getElementById('extraMinutos').value = ''; 
+    actualizarUIDashboard(); 
+    guardarDatosLocales();
 }
 
-function agregarActividadExtra() {
-    let select = document.getElementById('extraActividad'); let min = parseFloat(document.getElementById('extraMinutos').value); if(!min) return;
-    userData.actividadExtraHoy.push({ nombre: select.options[select.selectedIndex].text, met: parseFloat(select.value), min });
-    document.getElementById('extraMinutos').value = ''; calcularMetabolismo(); document.getElementById('caloriasExtraHoy').innerText = `+${Math.round(userData.calculos.extraHoyKcal)} kcal extra ganadas hoy`;
+function actualizarUIDashboard() {
+    let c = userData.calculos;
+    let metaDia = obtenerMetaDelDia(fechaSeleccionada);
+    let extraHTML = metaDia.extraKcal > 0 ? `<div class="flex justify-between text-orange-500 font-bold"><span>Extra de este día:</span> <span>+${Math.round(metaDia.extraKcal)} kcal</span></div>` : '';
+    
+    document.getElementById('tdeeBreakdown').innerHTML = `<div class="flex justify-between"><span>Tasa Basal:</span> <span>${Math.round(c.bmr)} kcal</span></div><div class="flex justify-between"><span>Pasos/Distancia:</span> <span>+${Math.round(c.neatKcal)} kcal</span></div><div class="flex justify-between"><span>Deporte Regular:</span> <span>+${Math.round(c.teaKcal)} kcal/día</span></div>${extraHTML}`;
+    
+    document.getElementById('dashTDEE').innerText = `${Math.round(metaDia.totalKcal)} kcal`; 
+    document.getElementById('ui-goal').innerText = `Objetivo: ${Math.round(metaDia.totalKcal)} kcal`;
+    
+    // Sumamos la actividad extra a los hidratos (fuente de energía prioritaria del músculo)
+    let extraCarbs = Math.round(metaDia.extraKcal / 4);
+    
+    document.getElementById('ui-prot-t').innerText = c.macrosBase.p + 'g'; 
+    document.getElementById('ui-carb-t').innerText = (c.macrosBase.c + extraCarbs) + 'g'; 
+    document.getElementById('ui-fat-t').innerText = c.macrosBase.f + 'g';
+    
+    let caloriasExtraHoyEl = document.getElementById('caloriasExtraHoy');
+    if(caloriasExtraHoyEl) caloriasExtraHoyEl.innerText = `+${Math.round(metaDia.extraKcal)} kcal extra ganadas hoy`;
 }
 
 function toggleCrearBaseInput() {
@@ -442,6 +516,42 @@ function buscarEnOpenFoodFacts(termino) {
 }
 
 function prepararRegistro(item) { 
+    // 1. INTERCEPCIÓN BLINDADA PARA RECETAS
+    if (modoAgregandoReceta) {
+        let defaultCant = item.cantidadPreferida || item.cantidadBase || 100;
+        let cant = prompt(`¿Qué cantidad de ${item.nombre} (${item.unidadMedida || 'g'}) vas a usar?`, defaultCant);
+        
+        if (cant !== null && !isNaN(cant) && parseFloat(cant) > 0) {
+            let cantidadUsada = parseFloat(cant);
+            let base = item.cantidadBase || (item.unidadMedida === 'g' ? 100 : 1);
+            let factor = cantidadUsada / base; // Matemáticamente perfecto para todo (0.5 tazas, 200g, etc.)
+            
+            let ing = {
+                nombre: item.nombre,
+                cantidad: cantidadUsada,
+                unidadMedida: item.unidadMedida || 'g',
+                pesoPorUnidad: item.pesoPorUnidad || null,
+                kcal: item.kcal * factor,
+                p: (item.p || 0) * factor,
+                c: (item.c || 0) * factor,
+                f: (item.f || 0) * factor
+            };
+            ingredientesRecetaTemp.push(ing);
+        }
+        
+        modoAgregandoReceta = false;
+        document.getElementById('regTituloSeccion').innerText = tituloOriginalPanel;
+        document.getElementById('tab-creaciones').classList.remove('hidden');
+        document.getElementById('tab-crear').classList.remove('hidden');
+        document.getElementById('buscadorAlimento').placeholder = "🔍 Buscar alimento o código de barras...";
+        
+        cambiarTabRegistro('crear');
+        cambiarModoCreacion('receta');
+        actualizarResumenReceta();
+        return; // Detenemos la ejecución aquí, no se abre el panel de abajo.
+    }
+
+    // 2. FLUJO NORMAL DE REGISTRO
     alimentoSeleccionadoBase = item; 
     document.getElementById('resultadosBusqueda').classList.add('hidden'); 
     
@@ -450,9 +560,11 @@ function prepararRegistro(item) {
 
     document.getElementById('detalleAlimentoElegido').classList.remove('hidden'); 
     document.getElementById('regNombre').innerText = item.nombre; 
-    document.getElementById('regUnidad').innerText = item.unidadMedida || 'g'; 
     
-    // Autocompleta con su porción preferida o la base por defecto
+    let strUnidad = item.unidadMedida || 'g';
+    if (item.pesoPorUnidad && strUnidad !== 'g') strUnidad += ` (${item.pesoPorUnidad}g)`;
+    document.getElementById('regUnidad').innerText = strUnidad; 
+    
     let cantidadDefault = item.cantidadPreferida ? item.cantidadPreferida : (item.cantidadBase ? item.cantidadBase : (item.unidadMedida === 'g' ? 100 : 1));
     document.getElementById('regCantidad').value = cantidadDefault; 
     
@@ -460,144 +572,117 @@ function prepararRegistro(item) {
     let btnFav = document.getElementById('btnFav');
     if(btnFav) {
         if(favs.some(f => f.nombre === item.nombre)) {
-            btnFav.classList.remove('text-slate-300');
-            btnFav.classList.add('text-amber-400');
+            btnFav.classList.remove('text-slate-300'); btnFav.classList.add('text-amber-400');
         } else {
-            btnFav.classList.remove('text-amber-400');
-            btnFav.classList.add('text-slate-300');
+            btnFav.classList.remove('text-amber-400'); btnFav.classList.add('text-slate-300');
         }
     }
-
     recalcularPreview(); 
 }
 
 function recalcularPreview() { 
-    let inputStr = document.getElementById('regCantidad').value;
-    let cantidad = parseFloat(inputStr); 
+    let cantidad = parseFloat(document.getElementById('regCantidad').value); 
     if(isNaN(cantidad) || cantidad <= 0 || !alimentoSeleccionadoBase) {
         document.getElementById('prevKcal').innerText = "0"; 
-        document.getElementById('prevP').innerText = "0"; 
-        document.getElementById('prevC').innerText = "0"; 
-        document.getElementById('prevF').innerText = "0"; 
+        document.getElementById('prevP').innerText = "0"; document.getElementById('prevC').innerText = "0"; document.getElementById('prevF').innerText = "0"; 
         return;
     }
-    let base = alimentoSeleccionadoBase.cantidadBase ? alimentoSeleccionadoBase.cantidadBase : 100;
-    let factor = (alimentoSeleccionadoBase.unidadMedida === 'g') ? (cantidad / base) : cantidad; 
-
+    let base = alimentoSeleccionadoBase.cantidadBase || (alimentoSeleccionadoBase.unidadMedida === 'g' ? 100 : 1);
+    let factor = cantidad / base; // Soporte perfecto para decimales y fracciones
+    
     document.getElementById('prevKcal').innerText = Math.round(alimentoSeleccionadoBase.kcal * factor); 
-    document.getElementById('prevP').innerText = Number((alimentoSeleccionadoBase.p * factor).toFixed(1)); 
-    document.getElementById('prevC').innerText = Number((alimentoSeleccionadoBase.c * factor).toFixed(1)); 
-    document.getElementById('prevF').innerText = Number((alimentoSeleccionadoBase.f * factor).toFixed(1)); 
+    document.getElementById('prevP').innerText = Number(((alimentoSeleccionadoBase.p || 0) * factor).toFixed(1)); 
+    document.getElementById('prevC').innerText = Number(((alimentoSeleccionadoBase.c || 0) * factor).toFixed(1)); 
+    document.getElementById('prevF').innerText = Number(((alimentoSeleccionadoBase.f || 0) * factor).toFixed(1)); 
 }
-
-let estaGuardandoComida =дет = false; // Bandera de seguridad antirrebote
 
 function registrarComidaSeleccionada() { 
     if(!alimentoSeleccionadoBase) return; 
-    
     if (window.lockRegistro) return;
-    window.lockRegistro = true;
-    setTimeout(() => { window.lockRegistro = false; }, 400);
+    window.lockRegistro = true; setTimeout(() => { window.lockRegistro = false; }, 400);
 
     let cantidad = parseFloat(document.getElementById('regCantidad').value); 
-    let base = alimentoSeleccionadoBase.cantidadBase ? alimentoSeleccionadoBase.cantidadBase : 100;
-    let factor = (alimentoSeleccionadoBase.unidadMedida === 'g') ? (cantidad / base) : cantidad; 
+    let base = alimentoSeleccionadoBase.cantidadBase || (alimentoSeleccionadoBase.unidadMedida === 'g' ? 100 : 1);
+    let factor = cantidad / base; 
     
+    let strMedida = alimentoSeleccionadoBase.unidadMedida || 'g';
+    if (alimentoSeleccionadoBase.pesoPorUnidad && strMedida !== 'g') strMedida = `${strMedida}s de ${alimentoSeleccionadoBase.pesoPorUnidad}g`;
+
     let nuevaComida = { 
         categoria: categoriaSeleccionadaActual,
-        nombre: `${alimentoSeleccionadoBase.nombre} (${cantidad} ${alimentoSeleccionadoBase.unidadMedida || 'g'})`, 
+        nombre: `${alimentoSeleccionadoBase.nombre} (${cantidad} ${strMedida})`, 
         kcal: alimentoSeleccionadoBase.kcal * factor, 
-        macros: { p: alimentoSeleccionadoBase.p * factor, c: alimentoSeleccionadoBase.c * factor, f: alimentoSeleccionadoBase.f * factor }, 
-        micros: {
-            fibra: (alimentoSeleccionadoBase.fibra || 0) * factor, azucar: (alimentoSeleccionadoBase.azucar || 0) * factor,
-            sodio: (alimentoSeleccionadoBase.sodio || 0) * factor, potasio: (alimentoSeleccionadoBase.potasio || 0) * factor,
-            calcio: (alimentoSeleccionadoBase.calcio || 0) * factor, hierro: (alimentoSeleccionadoBase.hierro || 0) * factor,
-            magnesio: (alimentoSeleccionadoBase.magnesio || 0) * factor, zinc: (alimentoSeleccionadoBase.zinc || 0) * factor,
-            vita: (alimentoSeleccionadoBase.vita || 0) * factor, vitc: (alimentoSeleccionadoBase.vitc || 0) * factor,
-            vitd: (alimentoSeleccionadoBase.vitd || 0) * factor, vitb12: (alimentoSeleccionadoBase.vitb12 || 0) * factor,
-            folato: (alimentoSeleccionadoBase.folato || 0) * factor
-        },
+        macros: { p: (alimentoSeleccionadoBase.p || 0) * factor, c: (alimentoSeleccionadoBase.c || 0) * factor, f: (alimentoSeleccionadoBase.f || 0) * factor }, 
+        micros: alimentoSeleccionadoBase.micros ? {
+            fibra: (alimentoSeleccionadoBase.micros.fibra || 0) * factor, azucar: (alimentoSeleccionadoBase.micros.azucar || 0) * factor,
+            sodio: (alimentoSeleccionadoBase.micros.sodio || 0) * factor, potasio: (alimentoSeleccionadoBase.micros.potasio || 0) * factor,
+            calcio: (alimentoSeleccionadoBase.micros.calcio || 0) * factor, hierro: (alimentoSeleccionadoBase.micros.hierro || 0) * factor,
+            magnesio: (alimentoSeleccionadoBase.micros.magnesio || 0) * factor, zinc: (alimentoSeleccionadoBase.micros.zinc || 0) * factor,
+            vita: (alimentoSeleccionadoBase.micros.vita || 0) * factor, vitc: (alimentoSeleccionadoBase.micros.vitc || 0) * factor,
+            vitd: (alimentoSeleccionadoBase.micros.vitd || 0) * factor, vitb12: (alimentoSeleccionadoBase.micros.vitb12 || 0) * factor,
+            folato: (alimentoSeleccionadoBase.micros.folato || 0) * factor
+        } : {},
         id: Date.now() 
     }; 
 
     if(!userData.comidas[fechaSeleccionada]) userData.comidas[fechaSeleccionada] = [];
     userData.comidas[fechaSeleccionada].push(nuevaComida); 
     
-    // GUARDADO INTELIGENTE: Memorizamos la porción que usó el usuario
-    let itemParaBiblioteca = { ...alimentoSeleccionadoBase };
-    itemParaBiblioteca.cantidadPreferida = cantidad; 
-
+    let itemParaBiblioteca = { ...alimentoSeleccionadoBase, cantidadPreferida: cantidad }; 
     registrarEnRecientes(itemParaBiblioteca);
     
-    alimentoSeleccionadoBase = null;
-    cerrarPanelRegistro();
-    recalcularComidasTotales(); 
-    renderizarCalendarioSemanal();
-    guardarDatosLocales(); 
+    alimentoSeleccionadoBase = null; cerrarPanelRegistro();
+    recalcularComidasTotales(); renderizarCalendarioSemanal(); guardarDatosLocales(); 
 }
 
 function guardarAlimentoEnBD() { 
-    let nombre = document.getElementById('crearName').value; 
+    let nombre = document.getElementById('crearName').value.trim(); 
     let unidad = document.getElementById('crearUnidad').value; 
     
-    // Capturamos la cantidad original con la que el usuario crea el alimento
-    let cantidadIngresada = parseFloat(document.getElementById('crearCantidadBase').value || 100);
-    let kcalIngresadas = parseFloat(document.getElementById('crearKcal').value || 0); 
+    let cantidadIngresada = parseFloat(document.getElementById('crearCantidadBase').value) || (unidad === 'g' ? 100 : 1);
+    let pesoPorUnidad = parseFloat(document.getElementById('crearPesoPorUnidad').value) || null;
+    let kcalIngresadas = parseFloat(document.getElementById('crearKcal').value) || 0; 
     
     if(!nombre || kcalIngresadas <= 0) { 
         alert("Por favor completa el nombre y las calorías."); 
         return; 
     } 
 
-    let protIngresadas = parseFloat(document.getElementById('crearProt').value || 0); 
-    let carbIngresadas = parseFloat(document.getElementById('crearCarb').value || 0); 
-    let fatIngresadas = parseFloat(document.getElementById('crearFat').value || 0);
+    let pIn = parseFloat(document.getElementById('crearProt').value) || 0; 
+    let cIn = parseFloat(document.getElementById('crearCarb').value) || 0; 
+    let fIn = parseFloat(document.getElementById('crearFat').value) || 0;
 
-    // Normalizamos para la Base de Datos Global (100g o 1 unidad)
     let cantidadBaseEstandar = (unidad === 'g') ? 100 : 1;
-    let factorNormalizacion = cantidadBaseEstandar / cantidadIngresada;
+    let factor = cantidadBaseEstandar / cantidadIngresada;
 
     let alimentoNormalizado = { 
         id: 'creado_' + Date.now(),
         nombre: nombre, 
         unidadMedida: unidad, 
-        cantidadBase: cantidadBaseEstandar, // La base matemática estricta (100g/1u)
-        
-        // ---> EL SMART PRESET: Memorizamos tu cantidad de creación como tu preferencia
-        cantidadPreferida: cantidadIngresada, 
-
-        kcal: kcalIngresadas * factorNormalizacion, 
-        p: protIngresadas * factorNormalizacion, 
-        c: carbIngresadas * factorNormalizacion, 
-        f: fatIngresadas * factorNormalizacion,
-        fibra: parseFloat(document.getElementById('crearFibra').value || 0) * factorNormalizacion,
-        azucar: parseFloat(document.getElementById('crearAzucar').value || 0) * factorNormalizacion,
-        sodio: parseFloat(document.getElementById('crearSodio').value || 0) * factorNormalizacion,
-        potasio: parseFloat(document.getElementById('crearPotasio').value || 0) * factorNormalizacion,
-        calcio: parseFloat(document.getElementById('crearCalcio').value || 0) * factorNormalizacion,
-        hierro: parseFloat(document.getElementById('crearHierro').value || 0) * factorNormalizacion,
-        magnesio: parseFloat(document.getElementById('crearMagnesio').value || 0) * factorNormalizacion,
-        zinc: parseFloat(document.getElementById('crearZinc').value || 0) * factorNormalizacion,
-        vita: parseFloat(document.getElementById('crearVitA').value || 0) * factorNormalizacion,
-        vitc: parseFloat(document.getElementById('crearVitC').value || 0) * factorNormalizacion,
-        vitd: parseFloat(document.getElementById('crearVitD').value || 0) * factorNormalizacion,
-        vitb12: parseFloat(document.getElementById('crearVitB12').value || 0) * factorNormalizacion,
-        folato: parseFloat(document.getElementById('crearFolato').value || 0) * factorNormalizacion
+        cantidadBase: cantidadBaseEstandar,
+        cantidadPreferida: (unidad === 'g') ? cantidadIngresada : 1, 
+        pesoPorUnidad: (unidad !== 'g' && pesoPorUnidad) ? pesoPorUnidad : null,
+        kcal: kcalIngresadas * factor, 
+        p: pIn * factor, c: cIn * factor, f: fIn * factor,
+        micros: {
+            fibra: (parseFloat(document.getElementById('crearFibra').value)||0)*factor, azucar: (parseFloat(document.getElementById('crearAzucar').value)||0)*factor,
+            sodio: (parseFloat(document.getElementById('crearSodio').value)||0)*factor, potasio: (parseFloat(document.getElementById('crearPotasio').value)||0)*factor,
+            calcio: (parseFloat(document.getElementById('crearCalcio').value)||0)*factor, hierro: (parseFloat(document.getElementById('crearHierro').value)||0)*factor,
+            magnesio: (parseFloat(document.getElementById('crearMagnesio').value)||0)*factor, zinc: (parseFloat(document.getElementById('crearZinc').value)||0)*factor,
+            vita: (parseFloat(document.getElementById('crearVitA').value)||0)*factor, vitc: (parseFloat(document.getElementById('crearVitC').value)||0)*factor,
+            vitd: (parseFloat(document.getElementById('crearVitD').value)||0)*factor, vitb12: (parseFloat(document.getElementById('crearVitB12').value)||0)*factor,
+            folato: (parseFloat(document.getElementById('crearFolato').value)||0)*factor
+        },
+        esReceta: false
     }; 
 
     alimentosPersonalizados.push(alimentoNormalizado); 
     localStorage.setItem('nutrifit_alimentos', JSON.stringify(alimentosPersonalizados)); 
     
-    // Limpieza de campos (asegúrate de que estén todos los IDs de tus macros)
-    ['crearName','crearKcal','crearProt','crearCarb','crearFat'].forEach(id=>{ 
-        let el = document.getElementById(id); 
-        if(el) el.value=''; 
-    }); 
+    ['crearName','crearKcal','crearProt','crearCarb','crearFat','crearPesoPorUnidad'].forEach(id=>{ let el = document.getElementById(id); if(el) el.value=''; }); 
     document.getElementById('crearCantidadBase').value = '100';
     
-    // Llamar al nuevo popup estilo app
     mostrarExitoCreacion(alimentoNormalizado);
-
 }
 
 function borrarComida(id) { 
@@ -645,7 +730,8 @@ function recalcularComidasTotales() {
         }
     });
     
-    let metaKcal = userData.calculos.metaDiaria; 
+    let metaDia = obtenerMetaDelDia(fechaSeleccionada);
+    let metaKcal = metaDia.totalKcal; 
     let pctKcal = (sumKcal / metaKcal) * 100;
     document.getElementById('ui-consumed').innerText = Math.round(sumKcal); 
     document.getElementById('ui-remaining').innerText = Math.round(metaKcal - sumKcal); 
@@ -654,9 +740,9 @@ function recalcularComidasTotales() {
     calBar.style.width = Math.min(pctKcal, 100) + '%';
     calBar.className = 'h-4 rounded-full transition-all duration-500 ' + obtenerClaseSemaforo(pctKcal);
     
-    let metaP = userData.calculos.macros.p;
-    let metaC = userData.calculos.macros.c;
-    let metaF = userData.calculos.macros.f;
+    let metaP = userData.calculos.macrosBase.p;
+    let metaC = userData.calculos.macrosBase.c + Math.round(metaDia.extraKcal / 4);
+    let metaF = userData.calculos.macrosBase.f;
 
     document.getElementById('ui-prot-c').innerText = Number(sumM.p.toFixed(1)); 
     let protBar = document.getElementById('ui-prot-bar');
@@ -1020,23 +1106,23 @@ function seleccionarItemTab(index) {
     let item = tempListaTab[index];
     if(!item) return;
     
-    let objRegistro = {
+    let objNormalizado = {
         id: item.id || null, 
         nombre: item.nombre, 
         unidadMedida: item.unidadMedida || 'g',
-        cantidadBase: item.cantidadBase || item.baseGramos || 100, 
+        cantidadBase: item.cantidadBase || 100, 
         cantidadPreferida: item.cantidadPreferida || null,
         kcal: item.kcal,
         p: item.p || 0, 
         c: item.c || 0, 
         f: item.f || 0,
-        fibra: item.fibra || 0, azucar: item.azucar || 0, sodio: item.sodio || 0,
-        potasio: item.potasio || 0, calcio: item.calcio || 0, hierro: item.hierro || 0,
-        magnesio: item.magnesio || 0, zinc: item.zinc || 0, vita: item.vita || 0,
-        vitc: item.vitc || 0, vitd: item.vitd || 0, vitb12: item.vitb12 || 0, folato: item.folato || 0
+        micros: item.micros || { fibra: 0, azucar: 0, sodio: 0, potasio: 0, calcio: 0, hierro: 0, magnesio: 0, zinc: 0, vita: 0, vitc: 0, vitd: 0, vitb12: 0, folato: 0 }
     };
 
-    prepararRegistro(objRegistro);
+    // Si estamos armando una receta, lo desviamos limpiamente aquí:
+    if (manejarSeleccionParaReceta(objNormalizado)) return;
+
+    prepararRegistro(objNormalizado);
 }
 
 //=================================
@@ -1089,6 +1175,7 @@ function mostrarMensajeDinamico(htmlContent) {
 // ==========================================
 let ingredientesRecetaTemp = [];
 let modoAgregandoReceta = false;
+let tituloOriginalPanel = "";
 
 function cambiarModoCreacion(modo) {
     let btnAlimento = document.getElementById('btnModoAlimento');
@@ -1111,40 +1198,53 @@ function cambiarModoCreacion(modo) {
 
 function abrirBuscadorIngrediente() {
     modoAgregandoReceta = true;
-    cambiarTabRegistro('recientes'); // Te lleva a tus comidas recientes para elegir
-    document.getElementById('buscadorAlimento').placeholder = "🔍 Busca un ingrediente para la receta...";
+    
+    let tituloEl = document.getElementById('regTituloSeccion');
+    tituloOriginalPanel = tituloEl.innerText;
+    tituloEl.innerText = "Buscar ingredientes";
+    
+    document.getElementById('tab-creaciones').classList.add('hidden');
+    document.getElementById('tab-crear').classList.add('hidden');
+    
+    document.getElementById('buscadorAlimento').placeholder = "🔍 Busca un ingrediente para tu receta...";
+    cambiarTabRegistro('favoritos'); 
 }
 
-// Interceptamos la función original para añadir a la receta en lugar de a la comida del día
-const funcionPrepararRegistroOriginal = prepararRegistro;
-prepararRegistro = function(alimentoSeleccionado) {
-    if (modoAgregandoReceta) {
-        let cant = prompt(`¿Qué cantidad de ${alimentoSeleccionado.nombre} (${alimentoSeleccionado.unidadBase}) vas a usar?`, "100");
+// NUEVA FUNCIÓN: Reemplaza al "secuestro" de prepararRegistro
+function manejarSeleccionParaReceta(itemSeleccionado) {
+    if (!modoAgregandoReceta) return false;
+
+    let cant = prompt(`¿Qué cantidad de ${itemSeleccionado.nombre} (${itemSeleccionado.unidadMedida || 'g'}) vas a usar?`, "100");
+    
+    if (cant !== null && !isNaN(cant) && parseFloat(cant) > 0) {
+        let cantidadUsada = parseFloat(cant);
+        let base = itemSeleccionado.cantidadBase || 100;
+        let factor = (itemSeleccionado.unidadMedida === 'g') ? (cantidadUsada / base) : cantidadUsada;
         
-        if (cant && !isNaN(cant)) {
-            let factor = parseFloat(cant) / alimentoSeleccionado.cantidadBase;
-            let ing = {
-                nombre: alimentoSeleccionado.nombre,
-                cantidad: parseFloat(cant),
-                kcal: alimentoSeleccionado.kcal * factor,
-                proteinas: alimentoSeleccionado.proteinas * factor,
-                carbohidratos: alimentoSeleccionado.carbohidratos * factor,
-                grasas: alimentoSeleccionado.grasas * factor
-            };
-            ingredientesRecetaTemp.push(ing);
-        }
-        
-        // Volvemos a la pestaña de crear receta
-        modoAgregandoReceta = false;
-        document.getElementById('buscadorAlimento').placeholder = "🔍 Buscar alimento o código de barras...";
-        cambiarTabRegistro('crear');
-        cambiarModoCreacion('receta');
-        actualizarResumenReceta();
-        return; 
+        let ing = {
+            nombre: itemSeleccionado.nombre,
+            cantidad: cantidadUsada,
+            unidadMedida: itemSeleccionado.unidadMedida || 'g',
+            kcal: itemSeleccionado.kcal * factor,
+            p: (itemSeleccionado.p || 0) * factor,
+            c: (itemSeleccionado.c || 0) * factor,
+            f: (itemSeleccionado.f || 0) * factor
+        };
+        ingredientesRecetaTemp.push(ing);
     }
     
-    funcionPrepararRegistroOriginal(alimentoSeleccionado);
-};
+    // Restaurar interfaz del panel de creación
+    modoAgregandoReceta = false;
+    document.getElementById('regTituloSeccion').innerText = tituloOriginalPanel;
+    document.getElementById('tab-creaciones').classList.remove('hidden');
+    document.getElementById('tab-crear').classList.remove('hidden');
+    document.getElementById('buscadorAlimento').placeholder = "🔍 Buscar alimento o código de barras...";
+    
+    cambiarTabRegistro('crear');
+    cambiarModoCreacion('receta');
+    actualizarResumenReceta();
+    return true; 
+}
 
 function actualizarResumenReceta() {
     let contenedor = document.getElementById('listaIngredientesReceta');
@@ -1161,12 +1261,12 @@ function actualizarResumenReceta() {
 
     ingredientesRecetaTemp.forEach((ing, index) => {
         totalK += ing.kcal;
-        totalP += ing.proteinas;
-        totalC += ing.carbohidratos;
-        totalG += ing.grasas;
+        totalP += ing.p;
+        totalC += ing.c;
+        totalG += ing.f;
         contenedor.innerHTML += `
             <div class="flex items-center justify-between bg-white dark:bg-slate-900 p-2 rounded-xl text-xs border border-slate-100 dark:border-slate-800 mb-1">
-                <span class="font-bold text-slate-700 dark:text-slate-200">${ing.nombre} <span class="text-slate-400 font-normal">(${ing.cantidad}g)</span></span>
+                <span class="font-bold text-slate-700 dark:text-slate-200">${ing.nombre} <span class="text-slate-400 font-normal">(${ing.cantidad}${ing.unidadMedida})</span></span>
                 <div class="flex items-center gap-3">
                     <span class="text-slate-500 font-medium">${Math.round(ing.kcal)} kcal</span>
                     <button onclick="eliminarIngredienteReceta(${index})" class="text-rose-500 hover:text-rose-700 transition-colors"><i class="fa-solid fa-trash-can"></i></button>
@@ -1186,22 +1286,50 @@ function guardarRecetaCompuesta() {
     if(!nombre) return alert("Dale un nombre a tu receta.");
     if(ingredientesRecetaTemp.length === 0) return alert("Añade al menos un ingrediente.");
 
-    let totalK = 0, totalP = 0, totalC = 0, totalG = 0;
-    ingredientesRecetaTemp.forEach(ing => { totalK += ing.kcal; totalP += ing.proteinas; totalC += ing.carbohidratos; totalG += ing.grasas; });
+    let totalK = 0, totalP = 0, totalC = 0, totalG = 0, pesoTotalGramos = 0;
+    
+    ingredientesRecetaTemp.forEach(ing => { 
+        totalK += ing.kcal; totalP += (ing.p || 0); totalC += (ing.c || 0); totalG += (ing.f || 0); 
+        
+        // Sumatoria inteligente de gramos
+        if (ing.unidadMedida === 'g') {
+            pesoTotalGramos += ing.cantidad;
+        } else if (ing.pesoPorUnidad) {
+            pesoTotalGramos += (ing.cantidad * ing.pesoPorUnidad);
+        }
+    });
 
-    let recetaNormalizada = {
-        id: 'receta_' + Date.now(),
-        nombre: nombre,
-        unidadBase: 'porcion',
-        cantidadBase: 1,
-        kcal: totalK,
-        proteinas: totalP,
-        carbohidratos: totalC,
-        grasas: totalG,
-        esReceta: true
-    };
+    let recetaNormalizada;
 
-    let alimentosPersonalizados = JSON.parse(localStorage.getItem('nutrifit_alimentos')) || [];
+    // Si pudimos calcular el peso en gramos, convertimos la receta a GRAMOS
+    if (pesoTotalGramos > 0) {
+        let factorA100g = 100 / pesoTotalGramos;
+        recetaNormalizada = {
+            id: 'receta_' + Date.now(),
+            nombre: nombre,
+            unidadMedida: 'g',
+            cantidadBase: 100,
+            cantidadPreferida: pesoTotalGramos, // Por defecto, te sugerirá comer toda la receta entera
+            kcal: totalK * factorA100g,
+            p: totalP * factorA100g, c: totalC * factorA100g, f: totalG * factorA100g,
+            micros: { fibra: 0, azucar: 0, sodio: 0, potasio: 0, calcio: 0, hierro: 0, magnesio: 0, zinc: 0, vita: 0, vitc: 0, vitd: 0, vitb12: 0, folato: 0 },
+            esReceta: true,
+            ingredientes: [...ingredientesRecetaTemp]
+        };
+    } else {
+        // Si no sabemos los gramos de las unidades, la guardamos por "porción"
+        recetaNormalizada = {
+            id: 'receta_' + Date.now(),
+            nombre: nombre,
+            unidadMedida: 'porcion',
+            cantidadBase: 1, cantidadPreferida: 1,
+            kcal: totalK, p: totalP, c: totalC, f: totalG,
+            micros: { fibra: 0, azucar: 0, sodio: 0, potasio: 0, calcio: 0, hierro: 0, magnesio: 0, zinc: 0, vita: 0, vitc: 0, vitd: 0, vitb12: 0, folato: 0 },
+            esReceta: true,
+            ingredientes: [...ingredientesRecetaTemp]
+        };
+    }
+
     alimentosPersonalizados.push(recetaNormalizada);
     localStorage.setItem('nutrifit_alimentos', JSON.stringify(alimentosPersonalizados));
 

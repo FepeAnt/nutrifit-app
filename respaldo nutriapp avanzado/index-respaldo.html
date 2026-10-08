@@ -17,7 +17,7 @@
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans antialiased min-h-screen pb-32 transition-colors duration-300">
 
     <!-- MODAL DE ALERTAS -->
-    <div id="modalOverlay" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[80] flex items-center justify-center opacity-0 hidden transition-opacity duration-300">
+    <div id="modalOverlay" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[8   0] flex items-center justify-center opacity-0 hidden transition-opacity duration-300">
         <div id="modalBox" class="bg-white dark:bg-slate-900 p-7 rounded-3xl shadow-2xl max-w-sm w-full mx-4 transform scale-90 transition-transform duration-300 relative text-center">
             <button onclick="cerrarModalAlerta()" class="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-rose-500 active:scale-90 transition-all"><i class="fa-solid fa-xmark"></i></button>
             <div id="modalContent" class="text-slate-600 dark:text-slate-300 text-base mt-4 leading-relaxed"></div>
@@ -159,20 +159,28 @@
                             <span class="flex items-center gap-3"><span class="w-9 h-9 rounded-xl bg-violet-100 dark:bg-violet-500/15 text-violet-500 flex items-center justify-center"><i class="fa-solid fa-microscope"></i></span>Micronutrientes y Vitaminas</span>
                             <i class="fa-solid fa-chevron-down text-xs text-slate-400 transition-transform group-open:rotate-180"></i>
                         </summary>
-                        <div class="grid grid-cols-2 gap-2.5 text-sm mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Fibra</span><span class="font-bold" id="ui-micro-fibra">0 g</span></div>
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Azúcares</span><span class="font-bold" id="ui-micro-azucar">0 g</span></div>
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Sodio</span><span class="font-bold" id="ui-micro-sodio">0 mg</span></div>
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Potasio</span><span class="font-bold" id="ui-micro-potasio">0 mg</span></div>
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Calcio</span><span class="font-bold" id="ui-micro-calcio">0 mg</span></div>
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Hierro</span><span class="font-bold" id="ui-micro-hierro">0 mg</span></div>
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Magnesio</span><span class="font-bold" id="ui-micro-magnesio">0 mg</span></div>
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Zinc</span><span class="font-bold" id="ui-micro-zinc">0 mg</span></div>
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Vit A</span><span class="font-bold" id="ui-micro-vita">0 mcg</span></div>
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Vit C</span><span class="font-bold" id="ui-micro-vitc">0 mg</span></div>
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Vit D</span><span class="font-bold" id="ui-micro-vitd">0 IU</span></div>
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Vit B12</span><span class="font-bold" id="ui-micro-vitb12">0 mcg</span></div>
-                            <div class="rounded-2xl bg-slate-50 dark:bg-slate-800 px-3 py-2.5"><span class="block text-xs text-slate-500 dark:text-slate-400">Ácido Fólico</span><span class="font-bold" id="ui-micro-folato">0 mcg</span></div>
+                        <!-- REEMPLAZAR ESTE BLOQUE DE LA LÍNEA 177 a 180 aprox -->
+                        <div class="grid grid-cols-2 gap-3 mb-1">
+                            <div class="flex flex-col gap-1.5">
+                                <label class="lbl !mb-0">¿Cómo lo mides?</label>
+                                <select id="crearUnidad" class="inp bg-slate-50 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700" onchange="toggleCrearBaseInput()">
+                                    <option value="g">En Gramos</option>
+                                    <option value="unidad">Por Unidad</option>
+                                    <option value="porcion">Por Porción</option>
+                                    <option value="taza">Por Taza</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col gap-1.5">
+                                <label id="lblCantidadBase" class="lbl !mb-0">Macros para (g)</label>
+                                <div class="flex gap-2">
+                                    <input type="number" step="any" id="crearCantidadBase" value="100" class="inp bg-slate-50 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 font-bold">
+                                    <span id="lblUnidadBaseTxt" class="flex items-center text-sm font-bold text-slate-500">g</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="containerPesoUnidad" class="hidden mb-4 p-3 bg-emerald-50 dark:bg-emerald-500/10 rounded-xl border border-emerald-100 dark:border-emerald-800/30">
+                            <label class="lbl !mb-0 text-emerald-700 dark:text-emerald-400">¿Cuántos gramos pesa 1 <span id="txtNombreUnidad">unidad</span>?</label>
+                            <input type="number" step="any" id="crearPesoPorUnidad" placeholder="Ej. 50 (Opcional)" class="inp mt-2 bg-white dark:bg-slate-900 border-emerald-200 dark:border-emerald-700">
                         </div>
                     </details>
                 </section>
