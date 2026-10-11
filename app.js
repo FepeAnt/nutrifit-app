@@ -1457,3 +1457,66 @@ function toggleAlturaInputs() {
         document.getElementById('alturaCm').classList.remove('hidden');
     }
 }
+
+// ==========================================
+// RESPALDO Y RESTAURACIÓN DE DATOS (JSON)
+// ==========================================
+
+function exportarDatosJSON() {
+    let backupData = {
+        version: "1.0",
+        fechaExportacion: new Date().toISOString(),
+        nutrifit_user: userData,
+        nutrifit_alimentos: alimentosPersonalizados
+    };
+
+    let jsonString = JSON.stringify(backupData, null, 2);
+    let blob = new Blob([jsonString], { type: "application/json" });
+    let url = URL.createObjectURL(blob);
+    
+    let downloadAnchor = document.createElement('a');
+    let fechaHoy = obtenerFechaIso(new Date());
+    
+    downloadAnchor.href = url;
+    downloadAnchor.download = `nutrifit_backup_${fechaHoy}.json`;
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    URL.revokeObjectURL(url);
+}
+
+function importarDatosJSON(event) {
+    let file = event.target.files[0];
+    if (!file) return;
+
+    let reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            let importedData = JSON.parse(e.target.result);
+            
+            // Validación de estructura mínima
+            if (!importedData.nutrifit_user) {
+                alert("❌ El archivo cargado no tiene un formato válido de copia de seguridad de NutriFit.");
+                return;
+            }
+
+            if (confirm("⚠️ Esta acción sobrescribirá todos tus datos actuales con los del archivo. ¿Deseas continuar?")) {
+                localStorage.setItem('nutrifit_user', JSON.stringify(importedData.nutrifit_user));
+                
+                if (importedData.nutrifit_alimentos) {
+                    localStorage.setItem('nutrifit_alimentos', JSON.stringify(importedData.nutrifit_alimentos));
+                }
+
+                alert("✅ ¡Copia de seguridad restaurada con éxito!");
+                location.reload();
+            }
+        } catch (err) {
+            alert("❌ Ocurrió un error al leer el archivo JSON. Verifica que no esté dañado.");
+            console.error(err);
+        }
+    };
+    reader.readAsText(file);
+    
+    // Resetea el valor para permitir subir el mismo archivo nuevamente si hiciera falta
+    event.target.value = '';
+}
