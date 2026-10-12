@@ -1676,3 +1676,121 @@ function copiarDiaAnterior() {
     
     alert("¡Comidas copiadas con éxito!");
 }
+
+// ==========================================
+// RESUMEN Y PROMEDIOS SEMANALES
+// ==========================================
+
+function abrirModalResumenSemanal() {
+    calcularResumenSemanal();
+    document.getElementById('modalResumenSemanal').classList.add('modal-active');
+}
+
+function cerrarModalResumenSemanal() {
+    document.getElementById('modalResumenSemanal').classList.remove('modal-active');
+}
+
+function calcularResumenSemanal() {
+    let contenedor = document.getElementById('contenidoResumenSemanal');
+    if (!contenedor) return;
+
+    // Analizamos los últimos 7 días a partir de la fecha seleccionada
+    let curr = new Date(fechaSeleccionada + 'T00:00:00');
+    let totalKcalConsumidas = 0;
+    let totalKcalMeta = 0;
+    let totalP = 0, totalC = 0, totalF = 0;
+    let diasConDatos = 0;
+    let optimos = 0, bajos = 0, excedidos = 0;
+
+    let htmlDias = '';
+
+    for (let i = 6; i >= 0; i--) {
+        let d = new Date(curr);
+        d.setDate(curr.getDate() - i);
+        let iso = obtenerFechaIso(d);
+        let comidasDia = userData.comidas[iso] || [];
+        let metaDia = obtenerMetaDelDia(iso).totalKcal;
+        
+        let sumKcal = comidasDia.reduce((acc, c) => acc + (c.kcal ?? c.kal ?? 0), 0);
+        let sumP = comidasDia.reduce((acc, c) => acc + (c.macros?.p ?? 0), 0);
+        let sumC = comidasDia.reduce((acc, c) => acc + (c.macros?.c ?? 0), 0);
+        let sumF = comidasDia.reduce((acc, c) => acc + (c.macros?.f ?? 0), 0);
+
+        if (comidasDia.length > 0) {
+            diasConDatos++;
+            totalKcalConsumidas += sumKcal;
+            totalKcalMeta += metaDia;
+            totalP += sumP;
+            totalC += sumC;
+            totalF += sumF;
+
+            let pct = (sumKcal / metaDia) * 100;
+            if (pct >= 90 && pct <= 110) optimos++;
+            else if (pct < 90) bajos++;
+            else excedidos++;
+        }
+
+        let nombreDia = d.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
+        let colorEstado = 'bg-slate-200 dark:bg-slate-700 text-slate-500';
+        if (comidasDia.length > 0) {
+            let pct = (sumKcal / metaDia) * 100;
+            if (pct >= 90 && pct <= 110) colorEstado = 'bg-emerald-500 text-white';
+            else if (pct < 90) colorEstado = 'bg-amber-400 text-white';
+            else colorEstado = 'bg-rose-500 text-white';
+        }
+
+        htmlDias += `
+        <div class="flex items-center justify-between p-2.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl text-xs border border-slate-100 dark:border-slate-800">
+            <span class="font-bold capitalize text-slate-700 dark:text-slate-300">${nombreDia}</span>
+            <div class="flex items-center gap-2">
+                <span class="font-semibold text-slate-600 dark:text-slate-400">${Math.round(sumKcal)} / ${Math.round(metaDia)} kcal</span>
+                <span class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${colorEstado}">${comidasDia.length > 0 ? Math.round((sumKcal/metaDia)*100) + '%' : '-'}</span>
+            </div>
+        </div>`;
+    }
+
+    let promKcal = diasConDatos > 0 ? Math.round(totalKcalConsumidas / diasConDatos) : 0;
+    let promMeta = diasConDatos > 0 ? Math.round(totalKcalMeta / diasConDatos) : Math.round(obtenerMetaDelDia(fechaSeleccionada).totalKcal);
+    let promP = diasConDatos > 0 ? Math.round(totalP / diasConDatos) : 0;
+    let promC = diasConDatos > 0 ? Math.round(totalC / diasConDatos) : 0;
+    let promF = diasConDatos > 0 ? Math.round(totalF / diasConDatos) : 0;
+
+    contenedor.innerHTML = `
+        <div class="bg-emerald-50 dark:bg-emerald-500/10 p-4 rounded-2xl border border-emerald-100 dark:border-emerald-500/20 text-center">
+            <p class="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-1">Promedio Calórico (Últimos 7 días)</p>
+            <p class="text-3xl font-black text-slate-800 dark:text-white">${promKcal} <span class="text-sm font-medium text-slate-400">kcal / día</span></p>
+            <p class="text-xs text-slate-500 mt-1">Meta promedio recomendada: ~${promMeta} kcal</p>
+        </div>
+
+        <div class="grid grid-cols-3 gap-2 text-center">
+            <div class="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+                <span class="text-[10px] font-bold text-slate-400 block mb-1">Prom. Proteína</span>
+                <span class="text-base font-extrabold text-slate-700 dark:text-slate-200">${promP}g</span>
+            </div>
+            <div class="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+                <span class="text-[10px] font-bold text-slate-400 block mb-1">Prom. Carbos</span>
+                <span class="text-base font-extrabold text-slate-700 dark:text-slate-200">${promC}g</span>
+            </div>
+            <div class="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+                <span class="text-[10px] font-bold text-slate-400 block mb-1">Prom. Grasas</span>
+                <span class="text-base font-extrabold text-slate-700 dark:text-slate-200">${promF}g</span>
+            </div>
+        </div>
+
+        <div class="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
+            <p class="text-xs font-bold text-slate-500 dark:text-slate-400 mb-2">Desglose de la semana (${diasConDatos} días con registros)</p>
+            <div class="flex justify-between text-xs font-semibold">
+                <span class="text-emerald-600">🟢 Óptimos: ${optimos}</span>
+                <span class="text-amber-500">🟡 Bajos: ${bajos}</span>
+                <span class="text-rose-500">🔴 Excedidos: ${excedidos}</span>
+            </div>
+        </div>
+
+        <div>
+            <p class="text-xs font-bold text-slate-500 dark:text-slate-400 mb-2">Detalle por día</p>
+            <div class="space-y-1.5">
+                ${htmlDias}
+            </div>
+        </div>
+    `;
+}
