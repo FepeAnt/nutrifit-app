@@ -881,6 +881,7 @@ function abrirModalProgreso() {
     document.getElementById('diasRecordatorio').value = userData.recordatorioDias;
     document.getElementById('progPeso').value = Number(userData.pesoKg.toFixed(1));
     renderizarListaProgreso();
+    renderizarGraficoProgreso();
     document.getElementById('modalProgreso').classList.add('modal-active');
 }
 function cerrarModalProgreso() { document.getElementById('modalProgreso').classList.remove('modal-active'); }
@@ -930,7 +931,7 @@ function guardarRegistroProgreso() {
 }
 
 function finalizarGuardadoProgreso() {
-    guardarDatosLocales(); renderizarListaProgreso(); verificarAlertaProgreso();
+    guardarDatosLocales(); renderizarListaProgreso(); renderizarGraficoProgreso(); verificarAlertaProgreso();
     document.getElementById('progGrasa').value = ''; document.getElementById('progMusculo').value = ''; document.getElementById('progFoto').value = '';
 }
 
@@ -1519,4 +1520,118 @@ function importarDatosJSON(event) {
     
     // Resetea el valor para permitir subir el mismo archivo nuevamente si hiciera falta
     event.target.value = '';
+}
+
+// ==========================================
+// GRÁFICO DE EVOLUCIÓN DE PROGRESO (CHART.JS)
+// ==========================================
+
+let chartProgresoInstance = null;
+let metricaGraficoActual = 'peso';
+
+function cambiarMetricaGrafico(metrica) {
+    metricaGraficoActual = metrica;
+    
+    let btnPeso = document.getElementById('btnGraficoPeso');
+    let btnGrasa = document.getElementById('btnGraficoGrasa');
+    
+    if (metrica === 'peso') {
+        btnPeso.className = "px-2.5 py-1 rounded-lg bg-emerald-500 text-white transition-all";
+        btnGrasa.className = "px-2.5 py-1 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-white transition-all";
+    } else {
+        btnGrasa.className = "px-2.5 py-1 rounded-lg bg-emerald-500 text-white transition-all";
+        btnPeso.className = "px-2.5 py-1 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-white transition-all";
+    }
+    
+    renderizarGraficoProgreso();
+}
+
+function renderizarGraficoProgreso() {
+    let canvas = document.getElementById('chartProgreso');
+    if (!canvas) return;
+
+    let ctx = canvas.getContext('2d');
+    
+    // Destruye instancia previa si ya existe
+    if (chartProgresoInstance) {
+        chartProgresoInstance.destroy();
+    }
+
+    let historial = [...(userData.progreso || [])].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+    
+    // Si la métrica es grasa, filtramos solo las entradas que tengan dato de grasa
+    if (metricaGraficoActual === 'grasa') {
+        historial = historial.filter(p => p.grasa !== null && p.grasa !== undefined && p.grasa > 0);
+    }
+
+    if (historial.length === 0) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+    }
+
+    let labels = historial.map(p => new Date(p.fecha).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' }));
+    let dataPoints = historial.map(p => metricaGraficoActual === 'peso' ? p.peso : p.grasa);
+
+    let esDark = document.documentElement.classList.contains('dark');
+    let colorLinea = '#10b981'; // emerald-500
+    let colorTexto = esDark ? '#94a3b8' : '#64748b';
+    let colorRed = esDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)';
+
+    // Gradiente de relleno bajo la curva
+    let gradient = ctx.createLinearGradient(0, 0, 0, 200);
+    gradient.addColorStop(0, 'rgba(16, 185, 129, 0.25)');
+    gradient.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
+
+    chartProgresoInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: metricaGraficoActual === 'peso' ? 'Peso (kg)' : 'Grasa (%)',
+                data: dataPoints,
+                borderColor: colorLinea,
+                backgroundColor: gradient,
+                borderWidth: 3,
+                tension: 0.35, // Curva suave
+                fill: true,
+                pointBackgroundColor: colorLinea,
+                pointBorderColor: '#ffffff',
+                pointBorderWidth: 2,
+                pointRadius: 5,
+                pointHoverRadius: 7
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: esDark ? '#1e293b' : '#ffffff',
+                    titleColor: esDark ? '#f8fafc' : '#0f172a',
+                    bodyColor: colorLinea,
+                    bodyFont: { weight: 'bold' },
+                    borderColor: esDark ? '#334155' : '#e2e8f0',
+                    borderWidth: 1,
+                    padding: 10,
+                    displayColors: false,
+                    callbacks: {
+                        label: function(context) {
+                            return `${context.parsed.y} ${metricaGraficoActual === 'peso' ? 'kg' : '%'}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: { color: colorTexto, font: { size: 10 } }
+                },
+                y: {
+                    grid: { color: colorRed },
+                    ticks: { color: colorTexto, font: { size: 10 } }
+                }
+            }
+        }
+    });
 }
