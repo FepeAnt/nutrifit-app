@@ -1635,3 +1635,44 @@ function renderizarGraficoProgreso() {
         }
     });
 }
+
+// ==========================================
+// COPIAR COMIDAS DEL DÍA ANTERIOR
+// ==========================================
+
+function copiarDiaAnterior() {
+    let curr = new Date(fechaSeleccionada + 'T00:00:00');
+    curr.setDate(curr.getDate() - 1);
+    let ayerIso = obtenerFechaIso(curr);
+    
+    let comidasAyer = userData.comidas[ayerIso];
+    if (!comidasAyer || comidasAyer.length === 0) {
+        alert("No hay comidas registradas en el día anterior para copiar.");
+        return;
+    }
+    
+    let comidasActuales = userData.comidas[fechaSeleccionada] || [];
+    if (comidasActuales.length > 0) {
+        if (!confirm("Ya tienes comidas registradas en este día. ¿Deseas agregar las del día anterior a las existentes?")) {
+            return;
+        }
+    }
+    
+    // Clonamos las comidas asignándoles IDs únicos para evitar colisiones
+    let comidasCopiadas = comidasAyer.map(c => ({
+        ...c,
+        id: Date.now() + Math.random()
+    }));
+    
+    if (!userData.comidas[fechaSeleccionada]) {
+        userData.comidas[fechaSeleccionada] = [];
+    }
+    
+    userData.comidas[fechaSeleccionada] = userData.comidas[fechaSeleccionada].concat(comidasCopiadas);
+    
+    guardarDatosLocales();
+    recalcularComidasTotales();
+    renderizarCalendarioSemanal();
+    
+    alert("¡Comidas copiadas con éxito!");
+}
